@@ -18,6 +18,44 @@ export type Edge = {
 
 export type PaperUpdate = Pick<Paper, "title" | "authors" | "abstract" | "year" | "source_type">;
 
+export type DBColumn = {
+  name: string;
+  type: string;
+  nullable: boolean;
+  primary_key: boolean;
+};
+
+export type DBForeignKey = {
+  constrained_columns: string[];
+  referred_table: string;
+  referred_columns: string[];
+};
+
+export type DBTableInfo = {
+  table_name: string;
+  row_count: number;
+  columns: DBColumn[];
+  foreign_keys: DBForeignKey[];
+};
+
+export type DBStatus = {
+  engine: string;
+  is_sqlite: boolean;
+  database_url_masked: string;
+  total_tables: number;
+  total_records: number;
+  tables: DBTableInfo[];
+  pool_status: any;
+};
+
+export type SQLQueryResult = {
+  query: string;
+  execution_time_ms: number;
+  columns: string[];
+  rows: Record<string, string | null>[];
+  row_count: number;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -38,11 +76,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  deletePaper: (paperId: number) =>
+    request<{ ok: boolean; deleted_paper_id: number }>(`/papers/${paperId}`, {
+      method: "DELETE",
+    }),
   graph: () => request<{ papers: Paper[]; edges: Edge[] }>("/graph"),
   upload: (file: File) => {
     const body = new FormData();
     body.append("file", file);
-    return request<{ paper: Paper; citation_edges: number; similarity_edges: number }>("/upload", {
+    return request<{ paper: Paper; citation_edges: number; similarity_edges: number; saved_path: string }>("/upload", {
       method: "POST",
       body,
     });
@@ -73,5 +115,11 @@ export const api = {
     request<{ answer: string; citations: string[] }>("/chat", {
       method: "POST",
       body: JSON.stringify({ question }),
+    }),
+  dbStatus: () => request<DBStatus>("/db/status"),
+  dbQuery: (query: string) =>
+    request<SQLQueryResult>("/db/query", {
+      method: "POST",
+      body: JSON.stringify({ query }),
     }),
 };

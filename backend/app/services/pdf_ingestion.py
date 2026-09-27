@@ -1,5 +1,7 @@
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 from rapidfuzz import fuzz
@@ -20,6 +22,7 @@ class IngestedPaper:
     paper: models.Paper
     citation_edges: int
     similarity_edges: int
+    saved_path: str = ""
 
 
 class PDFIngestionService:
@@ -27,9 +30,15 @@ class PDFIngestionService:
         self.embeddings = EmbeddingService()
         self.llm = LLMService()
 
-    def ingest_pdf(self, db: Session, file_bytes: bytes) -> IngestedPaper:
+    def ingest_pdf(
+        self, db: Session, file_bytes: bytes, original_filename: str = "paper.pdf"
+    ) -> IngestedPaper:
         import fitz
 
+        # 1. Save the uploaded research paper into the user's Downloads directory
+        saved_file_path = self._save_to_downloads(file_bytes, original_filename)
+
+        # 2. Extract text and metadata
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         full_text = "\n".join(page.get_text() for page in doc)
         first_page = doc[0] if doc.page_count else None
@@ -55,7 +64,30 @@ class PDFIngestionService:
         citation_count = self._link_references(db, paper.id, full_text)
         similarity_count = self._link_similar_papers(db, paper, whole_embedding)
         db.commit()
-        return IngestedPaper(paper, citation_count, similarity_count)
+        return IngestedPaper(paper, citation_count, similarity_count, saved_file_path)
+
+    def _save_to_downloads(self, file_bytes: bytes, original_filename: str) -> str:
+        """Store the uploaded research paper PDF in the user's Downloads folder."""
+        # Check environment override or default to OS user Downloads directory
+        downloads_dir = Path(os.getenv("DOWNLOADS_DIR", str(Path.home() / "Downloads")))
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+
+        clean_name = re.sub(r'[\\/*?:"<>|]', "", original_filename).strip()
+        if not clean_name:
+            clean_name = "uploaded_paper.pdf"
+        if not clean_name.lower().endswith(".pdf"):
+            clean_name += ".pdf"
+
+        target_file = downloads_dir / clean_name
+        stem = target_file.stem
+        ext = target_file.suffix
+        counter = 1
+        while target_file.exists():
+            target_file = downloads_dir / f"{stem}_{counter}{ext}"
+            counter += 1
+
+        target_file.write_bytes(file_bytes)
+        return str(target_file.resolve())
 
     def _extract_title(self, page, page_one_text: str) -> str:
         if not page:

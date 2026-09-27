@@ -1,11 +1,11 @@
+import re
 from collections import defaultdict
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
-from app.services.embeddings import cosine_similarity, decode_embedding
-from app.services.embeddings import EmbeddingService
+from app.services.embeddings import EmbeddingService, cosine_similarity, decode_embedding
 from app.services.llm import LLMService
 from app.services.research_graph import ResearchGraph
 from app.services.vector_store import VectorStore
@@ -39,7 +39,7 @@ class FeatureService:
             return []
         papers = db.query(models.Paper).filter(models.Paper.id.in_(ids)).all()
         by_id = {paper.id: paper for paper in papers}
-        return [by_id[paper_id] for paper_id in ids if paper_id in by_id]
+        return [by_id[pid] for pid in ids if pid in by_id]
 
     def explain_connection(self, db: Session, source_id: int, target_id: int) -> dict:
         graph = build_graph(db)
@@ -65,15 +65,13 @@ class FeatureService:
         graph = build_graph(db)
         papers = {paper.id: paper for paper in db.query(models.Paper).all()}
         degree: dict[int, int] = defaultdict(int)
-        edge_type_counts: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         for edge in db.query(models.Edge).all():
             degree[edge.source_paper_id] += 1
             degree[edge.target_paper_id] += 1
-            edge_type_counts[edge.source_paper_id][edge.edge_type] += 1
-            edge_type_counts[edge.target_paper_id][edge.edge_type] += 1
+
         suggestions: list[dict] = []
         for index, component in enumerate(graph.connected_components(), start=1):
-            cluster_papers = [papers[paper_id] for paper_id in component if paper_id in papers]
+            cluster_papers = [papers[pid] for pid in component if pid in papers]
             if not cluster_papers:
                 continue
             low_degree = sorted(cluster_papers, key=lambda paper: degree[paper.id])[:2]
@@ -122,7 +120,7 @@ class FeatureService:
                 score = cosine_similarity(
                     decode_embedding(newer.whole_embedding), decode_embedding(older.whole_embedding)
                 )
-                if score > 0.9 and (newer.id, older.id) not in citation_pairs:
+                if score > 0.88 and (newer.id, older.id) not in citation_pairs:
                     flags.append(
                         {
                             "paper": newer.title,
@@ -150,14 +148,16 @@ class FeatureService:
                 ).all()
         else:
             papers = query.all()
+
         graph = build_graph(db)
         ordered_ids = graph.topo_sort_extends_chain([paper.id for paper in papers])
         by_id = {paper.id: paper for paper in papers}
-        ordered = [by_id[paper_id] for paper_id in ordered_ids if paper_id in by_id]
+        ordered = [by_id[pid] for pid in ordered_ids if pid in by_id]
         if not ordered:
             ordered = sorted(papers, key=lambda paper: (paper.year or 9999, paper.title))
         else:
             ordered = sorted(ordered, key=lambda paper: (paper.year or 9999, paper.title))
+
         steps = []
         for left, right in zip(ordered, ordered[1:]):
             steps.append(self._evolution_step(left, right))
@@ -181,35 +181,148 @@ class FeatureService:
         }
 
     def rag_chat(self, db: Session, question: str) -> dict:
-        sql_hits = db.query(models.Paper).filter(
-            or_(models.Paper.title.ilike(f"%{question}%"), models.Paper.abstract.ilike(f"%{question}%"))
-        ).limit(5).all()
-        topic_aliases = self._topic_aliases(self._question_focus(question.lower(), []))
-        topic_hits = (
-            db.query(models.Paper)
-            .join(models.Paper.keywords)
-            .filter(models.Keyword.text.in_(topic_aliases))
-            .limit(5)
-            .all()
-        )
-        q_embedding = self.embeddings.embed(question)
+        """
+        Grounded, anti-hallucination RAG question answering.
+        Combines semantic chunk retrieval, title/abstract lexical matching,
+        and LLM completion strictly constrained to retrieved evidence.
+        """
+        clean_question = question.strip()
+        if not clean_question:
+            return {"answer": "Please ask a question about the research papers.", "citations": []}
+
+        # 1. Vector similarity search over chunks
+        q_embedding = self.embeddings.embed(clean_question)
         chunks = db.query(models.PaperChunk).all()
-        chunk_hits = self.vector_store.search(chunks, q_embedding, limit=5)
-        cited_ids = {paper.id for paper in sql_hits}
-        cited_ids.update(paper.id for paper in topic_hits)
-        cited_ids.update(chunk.paper_id for _, chunk in chunk_hits[:5])
-        papers = {paper.id: paper for paper in db.query(models.Paper).filter(models.Paper.id.in_(cited_ids)).all()}
-        ranked_papers = self._rank_papers_for_question(question, list(papers.values()))
-        answer = self._local_rag_answer(question, ranked_papers, chunk_hits)
+        chunk_hits = self.vector_store.search(chunks, q_embedding, limit=8)
+
+        # 2. Keyword/SQL match over paper titles and abstracts
+        keywords = [w for w in re.findall(r"\w+", clean_question.lower()) if len(w) > 3]
+        sql_filters = []
+        for kw in keywords[:3]:
+            sql_filters.append(models.Paper.title.ilike(f"%{kw}%"))
+            sql_filters.append(models.Paper.abstract.ilike(f"%{kw}%"))
+
+        matched_papers = []
+        if sql_filters:
+            matched_papers = db.query(models.Paper).filter(or_(*sql_filters)).limit(6).all()
+
+        # 3. Assemble retrieved evidence context
+        cited_papers_map: dict[int, models.Paper] = {}
+        context_blocks: list[str] = []
+
+        # Add top relevant chunks (filter out low similarity)
+        for score, chunk in chunk_hits:
+            if score < 0.15 and len(context_blocks) >= 2:
+                continue
+            paper = db.get(models.Paper, chunk.paper_id)
+            if paper:
+                cited_papers_map[paper.id] = paper
+                context_blocks.append(f"[{paper.title} (Year: {paper.year or 'N/A'}) - Passage]:\n{chunk.text}")
+            if len(context_blocks) >= 5:
+                break
+
+        # Supplement with paper abstracts
+        for paper in matched_papers:
+            if paper.id not in cited_papers_map and paper.abstract:
+                cited_papers_map[paper.id] = paper
+                context_blocks.append(f"[{paper.title} (Year: {paper.year or 'N/A'}) - Abstract]:\n{paper.abstract}")
+            if len(context_blocks) >= 7:
+                break
+
+        # Guard against zero-evidence hallucination
+        if not context_blocks:
+            return {
+                "answer": (
+                    f"No directly relevant research papers or excerpts were found in the database to answer '{clean_question}'. "
+                    "Try querying topics indexed in the database (such as retrieval, RAG, knowledge graphs, gap analysis, or evolution) "
+                    "or upload new PDFs in the Upload tab."
+                ),
+                "citations": [],
+            }
+
+        context_text = "\n\n".join(context_blocks)
+
+        prompt = (
+            "You are an academic research assistant for a literature discovery system. "
+            "Answer the question accurately using ONLY the research evidence provided in the context below.\n\n"
+            "Rules:\n"
+            "1. Answer strictly based on what is stated in the context. Do NOT invent claims, methods, datasets, or citations.\n"
+            "2. Whenever mentioning a finding, method, or conclusion, cite the paper in brackets, e.g. [Title of Paper].\n"
+            "3. If the context does not contain enough information to fully answer the question, state what is known and clarify what is missing.\n\n"
+            f"Context:\n{context_text}\n\n"
+            f"Question: {clean_question}"
+        )
+
+        # Call LLM service (OpenAI / Gemini / Groq / dynamic local grounded synthesis)
+        answer = self.llm.complete(prompt, context=context_text)
+
+        # Record conversation in chat history
+        cited_paper_titles = [paper.title for paper in cited_papers_map.values()]
         db.add(
             models.ChatHistory(
-                question=question,
+                question=clean_question,
                 answer=answer,
-                cited_paper_ids=",".join(str(paper.id) for paper in ranked_papers),
+                cited_paper_ids=",".join(str(pid) for pid in cited_papers_map.keys()),
             )
         )
         db.commit()
-        return {"answer": answer, "citations": [paper.title for paper in ranked_papers]}
+
+        return {"answer": answer, "citations": cited_paper_titles}
+
+    def _paper_contribution(self, paper: models.Paper) -> str:
+        """Dynamically extract paper contribution from abstract or title without hardcoded dictionaries."""
+        text = f"{paper.title}. {paper.abstract}".strip()
+        sentences = re.split(r"(?<=[.!?])\s+", paper.abstract)
+
+        # Look for explicit contribution sentence in abstract
+        contrib_patterns = [
+            r"\b(we propose|we introduce|we present|in this paper we|this work presents|our approach|we develop)\b",
+            r"\b(demonstrates that|results indicate|we design|we show that|proposes a method)\b",
+        ]
+        for pattern in contrib_patterns:
+            for s in sentences:
+                if re.search(pattern, s, re.I):
+                    clean_s = s.strip()
+                    if 15 < len(clean_s) < 300:
+                        return clean_s
+
+        if sentences and len(sentences[0].strip()) > 15:
+            return sentences[0].strip()
+
+        return f"Establishes methodologies and findings regarding {paper.title.lower()}."
+
+    def _limitation(self, paper: models.Paper) -> str:
+        """Dynamically extract limitations or open questions without hardcoded dictionaries."""
+        sentences = re.split(r"(?<=[.!?])\s+", paper.abstract)
+        limitation_patterns = [
+            r"\b(however|challenge|limit|future work|remains open|trade-off|bottleneck|open problem)\b",
+            r"\b(unaddressed|requires further|remains unclear|evaluating under)\b",
+        ]
+        for pattern in limitation_patterns:
+            for s in sentences:
+                if re.search(pattern, s, re.I):
+                    clean_s = s.strip()
+                    if 15 < len(clean_s) < 300:
+                        return clean_s.rstrip(".")
+
+        return f"how the findings of '{paper.title}' generalize across diverse real-world benchmarks and edge conditions"
+
+    def _evolution_step(self, left: models.Paper, right: models.Paper) -> dict:
+        left_contrib = self._paper_contribution(left)
+        left_limit = self._limitation(left)
+        right_contrib = self._paper_contribution(right)
+        return {
+            "from": left.title,
+            "to": right.title,
+            "solved": left_contrib,
+            "left_open": left_limit,
+            "next_fixed": right_contrib,
+            "note": (
+                f"{left.title} addressed {left_contrib.lower().rstrip('.')}. "
+                f"It left open {left_limit.lower().rstrip('.')}. "
+                f"{right.title} moves the chain forward by {right_contrib.lower().rstrip('.')}."
+            ),
+        }
 
     def _reading_plan(self, papers: list[models.Paper], days: int) -> list[dict]:
         days = max(days, 1)
@@ -217,6 +330,22 @@ class FeatureService:
         for index, paper in enumerate(papers):
             plan[index % days]["papers"].append(paper.title)
         return plan
+
+    def _literature_review(self, papers: list[models.Paper], topic: str | None) -> str:
+        if not papers:
+            return "No papers matched this topic."
+        first = papers[0]
+        last = papers[-1]
+        terms = self._topic_terms(papers)
+        first_contribution = self._paper_contribution(first).rstrip(".")
+        last_contribution = self._paper_contribution(last).rstrip(".")
+        unresolved = self._limitation(last if len(papers) == 1 else papers[-2]).rstrip(".")
+        return (
+            f"The {topic or 'selected'} literature begins with {first.title}, which {first_contribution}. "
+            f"Across {len(papers)} papers, the lineage develops core themes around {', '.join(terms[:3])}. "
+            f"It progresses toward {last.title}, which {last_contribution}. "
+            f"A central unresolved question is {unresolved}."
+        )
 
     def _topic_aliases(self, topic: str) -> list[str]:
         normalized = topic.strip().lower()
@@ -248,402 +377,6 @@ class FeatureService:
             "ui": ["interface"],
         }
         return aliases.get(normalized, [normalized])
-
-    def _paper_contribution(self, paper: models.Paper) -> str:
-        text = f"{paper.title} {paper.abstract}".lower()
-        title = paper.title.lower()
-        specific = self._specific_contribution(title)
-        if specific:
-            return specific
-        if "citation-aware research discovery" in title:
-            return "Uses citation links to surface influential and connected papers."
-        if "latent semantic indexing" in title:
-            return "Introduces semantic matching beyond exact keyword overlap."
-        if "probabilistic ranking" in title:
-            return "Frames scholarly search as ranked evidence under uncertainty."
-        if "learning to rank" in title:
-            return "Uses citation signals to improve result ordering."
-        if "dense passage" in title:
-            return "Uses embeddings to retrieve answer-bearing paper passages."
-        if "hybrid sparse-dense" in title:
-            return "Combines keyword and embedding retrieval for stronger coverage."
-        if "query expansion" in title:
-            return "Expands user queries with domain terminology and graph context."
-        if "evaluating neural retrieval" in title:
-            return "Adds evaluation pressure around retrieval quality in literature discovery."
-        if "robust retrieval pipelines" in title:
-            return "Turns retrieval methods into repeatable assistant-ready pipelines."
-        if "retrieval-augmented generation" in title or "rag" in title or "generation" in title:
-            return "Connects retrieved evidence to grounded answer generation."
-        if "citation graph" in title or "knowledge graph" in text or "graph" in title:
-            return "Adds structure through citations, semantic relations, or graph exploration."
-        if "ranking" in text:
-            return "Improves how relevant papers are ordered for exploration."
-        if "retrieval" in text:
-            return "Improves how relevant papers or passages are found."
-        if "gap" in text:
-            return "Turns sparse or weakly connected literature regions into research opportunities."
-        if "summar" in text:
-            return "Condenses multiple papers into review-ready claims and comparisons."
-        if "metadata" in text or "pdf" in text:
-            return "Improves ingestion quality and paper metadata reliability."
-        if "recommend" in text:
-            return "Suggests useful papers through user, citation, or embedding signals."
-        return "Adds a focused piece to the research workflow."
-
-    def _evolution_step(self, left: models.Paper, right: models.Paper) -> dict:
-        return {
-            "from": left.title,
-            "to": right.title,
-            "solved": self._paper_contribution(left),
-            "left_open": self._limitation(left),
-            "next_fixed": self._paper_contribution(right),
-            "note": (
-                f"{left.title} established {self._paper_contribution(left).lower()} "
-                f"It left open {self._limitation(left).lower()} "
-                f"{right.title} moves the chain forward by {self._paper_contribution(right).lower()}"
-            ),
-        }
-
-    def _limitation(self, paper: models.Paper) -> str:
-        text = f"{paper.title} {paper.abstract}".lower()
-        title = paper.title.lower()
-        specific = self._specific_limitation(title)
-        if specific:
-            return specific
-        if "citation-aware research discovery" in title:
-            return "whether citation networks overrepresent older or already popular work."
-        if "latent semantic indexing" in title:
-            return "whether semantic similarity alone captures domain-specific research intent."
-        if "probabilistic ranking" in title:
-            return "whether ranking assumptions hold for citation-heavy scientific search."
-        if "learning to rank" in title:
-            return "whether citation-based ranking overlooks new or under-cited papers."
-        if "dense passage" in title:
-            return "whether dense retrieval remains reliable for long, technical papers."
-        if "hybrid sparse-dense" in title:
-            return "how to balance lexical precision with semantic recall."
-        if "query expansion" in title:
-            return "whether expanded queries introduce noise or topic drift."
-        if "evaluating neural retrieval" in title:
-            return "which benchmarks reflect real literature discovery tasks."
-        if "robust retrieval pipelines" in title:
-            return "how the pipeline behaves under messy uploads and changing collections."
-        if "retrieval-augmented generation" in title or "rag" in title or "generation" in text:
-            return "how to prove answers stay faithful when evidence is incomplete."
-        if "citation graph" in title or "knowledge graph" in text or "graph" in title:
-            return "how graph structure remains readable and useful at larger scale."
-        if "retrieval" in text:
-            return "whether retrieval quality holds across domains, queries, and real users."
-        if "gap" in text:
-            return "how to validate suggested gaps without overstating uncertainty."
-        if "summar" in text:
-            return "how to preserve claim-level nuance across many papers."
-        if "metadata" in text or "pdf" in text:
-            return "how robust the pipeline is to noisy PDFs and inconsistent formats."
-        if "recommend" in text:
-            return "how to balance relevance, diversity, and cold-start behavior."
-        return "how the method generalizes beyond its immediate setting."
-
-    def _specific_contribution(self, title: str) -> str | None:
-        rules = [
-            ("retrieval-augmented generation", "Connects retrieved evidence to grounded answer generation."),
-            ("grounded answer generation", "Generates answers directly from retrieved research evidence."),
-            ("citation-aware rag", "Attaches citation evidence to generated scientific answers."),
-            ("chunk selection", "Chooses the most useful paper passages before answer generation."),
-            ("faithfulness checks", "Checks whether generated research answers stay supported by sources."),
-            ("rag with structured evidence", "Organizes retrieved evidence as a graph before generation."),
-            ("context window allocation", "Budgets limited context across multiple relevant papers."),
-            ("auditable rag", "Makes generated answers traceable to paper-level citations."),
-            ("knowledge graph construction", "Builds structured paper-concept networks from scholarly metadata."),
-            ("entity linking", "Connects paper text to canonical scientific concepts and methods."),
-            ("semantic relation extraction", "Labels relationships between papers beyond simple similarity."),
-            ("graph-based exploration", "Turns research communities into navigable graph neighborhoods."),
-            ("temporal knowledge graphs", "Adds time-aware structure for tracking topic evolution."),
-            ("interactive scholarly graph", "Makes graph exploration usable through interactive visual controls."),
-            ("visual analytics", "Uses visual summaries to help researchers inspect large paper collections."),
-            ("node-link interfaces", "Presents scholarly relationships as readable node-link diagrams."),
-            ("progressive disclosure", "Reveals graph detail gradually to reduce interface overload."),
-            ("design patterns", "Organizes AI-assisted research workflows into reusable interface patterns."),
-            ("explainable graph interactions", "Explains why papers are connected inside the graph UI."),
-            ("reading planner interfaces", "Transforms complex paper sets into scheduled reading paths."),
-            ("trust calibration", "Helps users judge when AI literature tools are reliable."),
-            ("workspace design", "Combines graph, retrieval, and review tools into one research workspace."),
-            ("finding research gaps", "Uses connected components to identify underexplored literature regions."),
-            ("low-degree nodes", "Treats sparse graph connectivity as a signal for possible gaps."),
-            ("cluster summaries", "Summarizes paper clusters to expose missing evaluation angles."),
-            ("unaddressed evaluation", "Highlights evaluation settings that applied AI papers leave uncovered."),
-            ("human-in-the-loop", "Adds researcher validation to gap recommendation workflows."),
-            ("contradiction mining", "Finds conflicting claims that can become open research questions."),
-            ("evidence clusters", "Turns related evidence groups into concrete research hypotheses."),
-            ("cautious gap", "Frames gap suggestions as uncertain leads rather than definitive claims."),
-            ("evaluating research assistants", "Tests research assistants for factual grounding."),
-            ("citation precision", "Measures whether generated answers cite the right papers."),
-            ("user studies", "Evaluates graph exploration with real researcher behavior."),
-            ("stress tests", "Challenges missing citation detection under difficult cases."),
-            ("coverage", "Measures whether literature review generators cover the topic adequately."),
-            ("benchmark datasets", "Creates shared datasets for evaluating scientific RAG systems."),
-            ("error taxonomies", "Categorizes common failures in research paper chatbots."),
-            ("reproducibility", "Defines protocols that make literature AI tools easier to reproduce."),
-            ("topic evolution", "Models how scientific topics change through citation chains."),
-            ("topological ordering", "Orders method-extension graphs into readable lineage chains."),
-            ("research lineage", "Turns lineage graphs into practical reading plans."),
-            ("method progression", "Explains how one paper addresses limits left by another."),
-            ("timeline summaries", "Converts paper sequences into concise timeline summaries."),
-            ("detecting cycles", "Detects circular claims inside method-extension chains."),
-            ("narrative literature", "Generates review narratives from structured paper chains."),
-            ("pedagogical sequencing", "Orders foundational papers for easier learning."),
-            ("scientific paper summarization", "Summarizes papers using section-aware document structure."),
-            ("multi-document summaries", "Synthesizes multiple papers into survey-style summaries."),
-            ("extractive summaries", "Pulls methods and contributions directly from paper text."),
-            ("abstractive summaries", "Generates citation-grounded summaries in new wording."),
-            ("comparative summaries", "Compares related papers across methods and findings."),
-            ("claim-centric", "Centers summaries around claims, evidence, and limitations."),
-            ("evaluation rubrics", "Defines criteria for judging scientific summaries."),
-            ("controllable literature", "Lets users steer literature review paragraph generation."),
-            ("graph neural networks", "Applies graph neural networks to paper recommendation."),
-            ("personalized paper recommendation", "Uses reading histories for personalized suggestions."),
-            ("cold-start", "Recommends papers when user history is sparse."),
-            ("diversity-aware", "Balances relevance with diversity in exploration."),
-            ("serendipity", "Measures whether recommendations surface useful surprises."),
-            ("citation-enhanced", "Uses citation context to improve recommendations."),
-            ("interactive feedback", "Learns recommendations from user feedback loops."),
-            ("benchmarking scholarly", "Compares recommendation systems under shared benchmarks."),
-            ("pdf metadata", "Extracts metadata from scholarly PDFs."),
-            ("title and author", "Detects titles and authors in academic PDF layouts."),
-            ("reference parsing", "Parses noisy reference sections from research documents."),
-            ("semantic scholar matching", "Matches uploaded papers to indexed records with fuzzy search."),
-            ("deduplicating", "Merges duplicate uploaded and indexed paper records."),
-            ("metadata quality", "Checks metadata reliability before indexing."),
-            ("recovering abstracts", "Recovers abstracts from heterogeneous PDF layouts."),
-            ("ingestion pipelines", "Builds practical ingestion pipelines for literature tools."),
-        ]
-        for needle, value in rules:
-            if needle in title:
-                return value
-        return None
-
-    def _specific_limitation(self, title: str) -> str | None:
-        rules = [
-            ("retrieval-augmented generation", "how to prove answers stay faithful when evidence is incomplete."),
-            ("grounded answer generation", "how to handle evidence conflicts without inventing unsupported claims."),
-            ("citation-aware rag", "whether citation links are precise enough for claim-level verification."),
-            ("chunk selection", "how to pick passages when relevant evidence is scattered across papers."),
-            ("faithfulness checks", "which faithfulness errors matter most to researchers."),
-            ("rag with structured evidence", "whether graph-structured evidence improves answers without adding complexity."),
-            ("context window allocation", "how to allocate context fairly across long or competing papers."),
-            ("auditable rag", "how much citation detail users need before answers become hard to read."),
-            ("knowledge graph construction", "whether extracted graph facts remain accurate across noisy metadata sources."),
-            ("entity linking", "how to resolve ambiguous concepts across disciplines."),
-            ("semantic relation extraction", "whether relation labels are consistent enough for downstream reasoning."),
-            ("graph-based exploration", "how to prevent large communities from becoming visually overwhelming."),
-            ("temporal knowledge graphs", "whether time-aware edges capture conceptual change rather than only publication order."),
-            ("interactive scholarly graph", "how well users understand graph controls during real review work."),
-            ("visual analytics", "which visual encodings actually improve research decisions."),
-            ("node-link interfaces", "how node-link diagrams scale beyond small paper sets."),
-            ("progressive disclosure", "which details should be hidden or revealed at each step."),
-            ("design patterns", "whether patterns generalize across research domains and user skill levels."),
-            ("explainable graph interactions", "how to explain connections without oversimplifying evidence."),
-            ("reading planner interfaces", "how to adapt plans when users skip or reorder papers."),
-            ("trust calibration", "how to prevent users from overtrusting polished AI outputs."),
-            ("workspace design", "how to keep multiple research tools coherent in one workflow."),
-            ("finding research gaps", "how to validate that a sparse region is truly a gap."),
-            ("low-degree nodes", "whether low degree reflects novelty, missing data, or irrelevance."),
-            ("cluster summaries", "how to avoid hiding minority findings inside one cluster summary."),
-            ("unaddressed evaluation", "which missing evaluations matter most for practical deployment."),
-            ("human-in-the-loop", "how much review effort researchers will tolerate."),
-            ("contradiction mining", "how to distinguish true contradictions from different assumptions."),
-            ("evidence clusters", "how to rank hypotheses by feasibility and importance."),
-            ("cautious gap", "how to communicate uncertainty without weakening usefulness."),
-            ("evaluating research assistants", "which tasks best reflect real research work."),
-            ("citation precision", "how to evaluate citations when multiple papers support a claim."),
-            ("user studies", "whether lab behavior transfers to long-term literature workflows."),
-            ("stress tests", "which failure modes are most common in real collections."),
-            ("coverage", "how to measure coverage when topic boundaries are fuzzy."),
-            ("benchmark datasets", "whether benchmarks stay current as research topics evolve."),
-            ("error taxonomies", "how to turn error categories into actionable fixes."),
-            ("reproducibility", "how to reproduce results when APIs, models, and corpora change."),
-            ("topic evolution", "whether citation chains capture intellectual influence."),
-            ("topological ordering", "how to handle cycles and contested extension claims."),
-            ("research lineage", "how to personalize reading plans for different backgrounds."),
-            ("method progression", "how to verify that a later paper truly fixes an earlier limitation."),
-            ("timeline summaries", "how to preserve nuance in a compressed timeline."),
-            ("detecting cycles", "which edge should be dropped when a cycle is ambiguous."),
-            ("narrative literature", "how to avoid making a chain sound more certain than it is."),
-            ("pedagogical sequencing", "how to balance historical order with learning difficulty."),
-            ("scientific paper summarization", "how to keep section-level summaries faithful."),
-            ("multi-document summaries", "how to avoid blending incompatible findings."),
-            ("extractive summaries", "which extracted sentences best represent the paper."),
-            ("abstractive summaries", "how to prevent generated summaries from adding unsupported claims."),
-            ("comparative summaries", "which comparison axes matter across related papers."),
-            ("claim-centric", "how to link each claim back to evidence."),
-            ("evaluation rubrics", "whether rubrics predict usefulness for researchers."),
-            ("controllable literature", "how much control users need without making the tool complex."),
-            ("graph neural networks", "how recommendations work for new topics with sparse graph data."),
-            ("personalized paper recommendation", "how to protect privacy and avoid filter bubbles."),
-            ("cold-start", "how to recommend well before preferences are known."),
-            ("diversity-aware", "how much diversity to trade for immediate relevance."),
-            ("serendipity", "how to measure useful surprise rather than randomness."),
-            ("citation-enhanced", "whether citation context disadvantages newer papers."),
-            ("interactive feedback", "how quickly feedback should change recommendations."),
-            ("benchmarking scholarly", "which benchmark metrics reflect researcher satisfaction."),
-            ("pdf metadata", "how to handle inconsistent publisher formats."),
-            ("title and author", "how to detect metadata in unusual PDF layouts."),
-            ("reference parsing", "how to recover references from noisy or incomplete sections."),
-            ("semantic scholar matching", "how to avoid false matches for similar titles."),
-            ("deduplicating", "how to merge duplicates without losing provenance."),
-            ("metadata quality", "which metadata errors most damage search and graph quality."),
-            ("recovering abstracts", "how to distinguish abstracts from introductions or summaries."),
-            ("ingestion pipelines", "how to keep ingestion robust without heavy infrastructure."),
-        ]
-        for needle, value in rules:
-            if needle in title:
-                return value
-        return None
-
-    def _literature_review(self, papers: list[models.Paper], topic: str | None) -> str:
-        if not papers:
-            return "No papers matched this topic."
-        first = papers[0]
-        last = papers[-1]
-        terms = self._topic_terms(papers)
-        first_contribution = self._paper_contribution(first).rstrip(".").lower()
-        last_contribution = self._paper_contribution(last).rstrip(".").lower()
-        unresolved = self._limitation(last if len(papers) == 1 else papers[-2]).rstrip(".")
-        return (
-            f"The {topic or 'selected'} literature begins with {first.title}, which {first_contribution}. "
-            f"Across {len(papers)} papers, the chain develops themes around {', '.join(terms[:3])}. "
-            f"It ends with {last.title}, shifting the focus toward {last_contribution}. "
-            f"The main unresolved thread is {unresolved}."
-        )
-
-    def _local_rag_answer(
-        self,
-        question: str,
-        cited_papers: list[models.Paper],
-        chunk_hits: list[tuple[float, models.PaperChunk]],
-    ) -> str:
-        q = question.lower()
-        if not cited_papers:
-            return "I could not find matching papers in the collection for that question."
-        cited_papers = self._rank_papers_for_question(question, cited_papers)
-        terms = self._topic_terms(cited_papers)
-        top_titles = [paper.title for paper in cited_papers[:3]]
-        evidence_line = f"Evidence I used: {', '.join(top_titles)}."
-        focus = self._question_focus(q, terms)
-
-        if self._asks_definition(q) and ("knowledge graph" in q or "graph" in q):
-            relation_examples = ", ".join(self._paper_contribution(paper).rstrip(".").lower() for paper in cited_papers[:3])
-            return (
-                "A knowledge graph in this app is a map of papers, concepts, and relationships. Papers become nodes; citation, similarity, and method-extension links become edges. "
-                f"For the retrieved graph papers, the useful jobs are: {relation_examples}. "
-                "That lets the interface explain why papers are connected instead of only listing search results. "
-                f"{evidence_line}"
-            )
-        if self._asks_definition(q) and ("rag" in q or "retrieval" in q):
-            return (
-                "Retrieval is the search layer that finds relevant papers or chunks. RAG adds a generation layer that writes an answer from those retrieved sources and keeps citations attached. "
-                f"In this collection, the retrieved work emphasizes {', '.join(self._paper_contribution(p).rstrip('.').lower() for p in cited_papers[:3])}. "
-                f"{evidence_line}"
-            )
-        if "missing citation" in q or "citation detection" in q or ("citation" in q and ("work" in q or "detect" in q or "missing" in q)):
-            return (
-                "Missing citation detection is a review signal, not a final verdict. The app compares newer papers against older papers using semantic similarity, then checks whether a citation edge already exists. "
-                "If the content is close, the newer paper is later in time, and no citation link is present, it becomes a candidate for human inspection. "
-                "The important open issue is precision: similar papers can share background without requiring a citation. "
-                f"{evidence_line}"
-            )
-        if "evolution" in q or "timeline" in q or "reading" in q or "chain" in q:
-            ordered = sorted(cited_papers[:5], key=lambda paper: (paper.year or 9999, paper.title))
-            transitions = []
-            for left, right in zip(ordered, ordered[1:]):
-                transitions.append(
-                    f"{left.year}: {left.title} opened {self._limitation(left).rstrip('.').lower()}; "
-                    f"{right.title} then {self._advance_phrase(right)}"
-                )
-            if transitions:
-                return (
-                    f"The {focus} evolution is best read as a sequence of problems being made more usable. "
-                    + " ".join(transitions[:3])
-                    + f" {evidence_line}"
-                )
-            return (
-                f"The {focus} evolution should be read from foundational papers toward newer work that adds evaluation, interface support, or workflow integration. "
-                f"{evidence_line}"
-            )
-        if "gap" in q or "underexplored" in q or "open question" in q:
-            weak = self._weak_edge_types([], terms)
-            candidates = ", ".join(paper.title for paper in cited_papers[:2])
-            return (
-                f"For {focus}, the gap is not simply that papers are missing; it is that the cluster needs stronger evidence around {', '.join(weak[:2])}. "
-                f"I would inspect {candidates} first because retrieved papers like these can reveal weak links between methods, evaluation, and deployment claims. "
-                f"{evidence_line}"
-            )
-        if "compare" in q or "difference" in q or "versus" in q or " vs " in q:
-            first = cited_papers[0]
-            second = cited_papers[1] if len(cited_papers) > 1 else cited_papers[0]
-            return (
-                f"{first.title} mainly {self._paper_contribution(first).rstrip('.').lower()}, while {second.title} mainly {self._paper_contribution(second).rstrip('.').lower()}. "
-                f"The practical difference is that the first paper anchors one part of {focus}, while the second pushes a different part of the workflow or evaluation story. "
-                f"{evidence_line}"
-            )
-        if "recommend" in q or "suggest" in q:
-            return (
-                f"The recommendation thread for {focus} combines graph position, user feedback, citation context, and embedding similarity. "
-                f"The tradeoff is that papers can be relevant but repetitive, so good recommendations also need diversity and cold-start checks. "
-                f"{evidence_line}"
-            )
-        if "metadata" in q or "pdf" in q or "ingestion" in q:
-            return (
-                "The metadata pipeline turns messy uploaded PDFs into usable records: title, authors, abstract, references, chunks, and embeddings. "
-                "Its main risk is that one bad extraction can damage search, citation checks, and graph links downstream. "
-                f"{evidence_line}"
-            )
-        return (
-            f"This question is mainly about {focus}. "
-            f"The strongest retrieved evidence says to focus on {self._paper_contribution(cited_papers[0]).rstrip('.').lower()}, while also checking {self._limitation(cited_papers[0]).rstrip('.').lower()}. "
-            f"{evidence_line}"
-        )
-
-    def _advance_phrase(self, paper: models.Paper) -> str:
-        contribution = self._paper_contribution(paper).rstrip(".").lower()
-        if contribution.startswith(("adds ", "uses ", "builds ", "connects ", "turns ", "orders ", "models ")):
-            return contribution
-        return f"adds {contribution}"
-
-    def _rank_papers_for_question(self, question: str, papers: list[models.Paper]) -> list[models.Paper]:
-        q = question.lower()
-
-        def score(paper: models.Paper) -> tuple[int, int, str]:
-            text = f"{paper.title} {paper.abstract}".lower()
-            matches = sum(1 for token in q.replace("?", " ").replace(".", " ").split() if len(token) > 3 and token in text)
-            exact = 2 if paper.title.lower() in q else 0
-            return (matches + exact, -(paper.year or 9999), paper.title)
-
-        return sorted(papers, key=score, reverse=True)
-
-    def _asks_definition(self, question: str) -> bool:
-        starts = ("what is", "what are", "define", "explain what", "tell me what")
-        return question.strip().startswith(starts)
-
-    def _question_focus(self, question: str, fallback_terms: list[str]) -> str:
-        focus_rules = [
-            ("knowledge graph interface", ["knowledge graph", "interface"]),
-            ("knowledge graph", ["knowledge graph", "graph"]),
-            ("missing citation detection", ["missing citation", "citation detection"]),
-            ("gap analysis", ["gap", "underexplored", "open question"]),
-            ("evolution chain", ["evolution", "timeline", "reading", "chain"]),
-            ("metadata extraction", ["metadata", "pdf", "ingestion"]),
-            ("paper recommendation", ["recommend", "suggest"]),
-            ("retrieval augmented generation", ["rag", "generation"]),
-            ("retrieval", ["retrieval", "search"]),
-            ("summarization", ["summary", "summarization", "summarize"]),
-            ("evaluation", ["evaluation", "benchmark", "metric"]),
-        ]
-        for label, needles in focus_rules:
-            if any(needle in question for needle in needles):
-                return label
-        return " and ".join(fallback_terms[:2])
 
     def _topic_terms(self, papers: list[models.Paper]) -> list[str]:
         terms = [

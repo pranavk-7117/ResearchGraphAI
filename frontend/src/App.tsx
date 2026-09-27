@@ -1,13 +1,14 @@
-import { BookOpen, GitFork, MessageSquareText, Network, Sparkles, Upload } from "lucide-react";
+import { BookOpen, Database, GitFork, MessageSquareText, Network, Sparkles, Upload } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ChatPage } from "./pages/ChatPage";
+import { DatabasePage } from "./pages/DatabasePage";
 import { EvolutionPage } from "./pages/EvolutionPage";
 import { GapsPage } from "./pages/GapsPage";
 import { GraphPage } from "./pages/GraphPage";
 import { UploadPage } from "./pages/UploadPage";
 import { api, Paper } from "./lib/api";
 
-type Page = "upload" | "graph" | "gaps" | "evolution" | "chat";
+type Page = "upload" | "graph" | "gaps" | "evolution" | "chat" | "database";
 
 const nav = [
   { id: "upload", label: "Upload", icon: Upload },
@@ -15,6 +16,7 @@ const nav = [
   { id: "gaps", label: "Gaps", icon: Sparkles },
   { id: "evolution", label: "Evolution", icon: GitFork },
   { id: "chat", label: "Chat", icon: MessageSquareText },
+  { id: "database", label: "Database", icon: Database },
 ] as const;
 
 export function App() {
@@ -59,6 +61,7 @@ export function App() {
         {page === "gaps" && <GapsPage />}
         {page === "evolution" && <EvolutionPage />}
         {page === "chat" && <ChatPage />}
+        {page === "database" && <DatabasePage />}
       </main>
     </div>
   );

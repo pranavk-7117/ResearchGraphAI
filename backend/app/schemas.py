@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel
 
 
@@ -38,6 +39,13 @@ class GraphOut(BaseModel):
     edges: list[EdgeOut]
 
 
+class UploadOut(BaseModel):
+    paper: PaperOut
+    citation_edges: int
+    similarity_edges: int
+    saved_path: str
+
+
 class RelatedRequest(BaseModel):
     paper_id: int
     hops: int = 2
@@ -57,3 +65,15 @@ class ChainRequest(BaseModel):
     paper_ids: list[int] | None = None
     topic: str | None = None
     days: int = 5
+
+
+class SQLQueryRequest(BaseModel):
+    query: str
+
+
+class SQLQueryResponse(BaseModel):
+    query: str
+    execution_time_ms: float
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    row_count: int
