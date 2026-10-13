@@ -56,6 +56,32 @@ export type SQLQueryResult = {
   row_count: number;
 };
 
+export type TopicItem = {
+  topic: string;
+  count: number;
+};
+
+export type SamplePaperItem = {
+  filename: string;
+  title: string;
+  size_bytes: number;
+  relative_path: string;
+  absolute_path: string;
+};
+
+export type SampleDomainItem = {
+  domain_name: string;
+  folder_name: string;
+  paper_count: number;
+  papers: SamplePaperItem[];
+};
+
+export type SamplePapersResponse = {
+  domains: SampleDomainItem[];
+  total_papers: number;
+  directory: string;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -101,7 +127,21 @@ export const api = {
     }),
   gaps: () =>
     request<{
-      gap_suggestions: { cluster: number; paper_count: number; candidate_papers: string[]; suggestion: string }[];
+      gap_suggestions: {
+        cluster: number;
+        topic: string;
+        opportunity_type: string;
+        paper_count: number;
+        edge_count: number;
+        average_degree: number;
+        coverage_score: number;
+        weak_edge_types: string[];
+        candidate_papers: string[];
+        bridge_candidates: string[];
+        research_questions: string[];
+        next_steps: string[];
+        suggestion: string;
+      }[];
       missing_citations: { paper: string; may_need_citation: string; similarity: number }[];
     }>("/gaps"),
   evolution: (topic: string, days: number) =>
@@ -116,6 +156,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ question }),
     }),
+  topics: () => request<TopicItem[]>("/topics"),
+  samplePapers: () => request<SamplePapersResponse>("/sample-papers"),
   dbStatus: () => request<DBStatus>("/db/status"),
   dbQuery: (query: string) =>
     request<SQLQueryResult>("/db/query", {

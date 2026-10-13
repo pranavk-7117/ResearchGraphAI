@@ -1,198 +1,20 @@
+import os
+from collections import defaultdict
+from pathlib import Path
+
 from app import models
+from app.corpus_data import DOMAINS_DATA
 from app.database import SessionLocal, init_db
-from app.services.embeddings import EmbeddingService, encode_embedding
-
-
-THEMES = [
-    {
-        "slug": "retrieval",
-        "keyword": "retrieval",
-        "titles": [
-            "Latent Semantic Indexing for Information Retrieval",
-            "Probabilistic Ranking for Scholarly Search",
-            "Learning to Rank Research Articles with Citation Signals",
-            "Dense Passage Retrieval for Open-Domain Questions",
-            "Hybrid Sparse-Dense Retrieval for Scientific Corpora",
-            "Query Expansion with Domain Terminology Graphs",
-            "Evaluating Neural Retrieval in Literature Discovery",
-            "Robust Retrieval Pipelines for Research Assistants",
-        ],
-        "abstract": "studies retrieval models for finding relevant scientific papers using lexical signals, dense embeddings, citations, and query reformulation.",
-    },
-    {
-        "slug": "rag",
-        "keyword": "rag",
-        "titles": [
-            "Retrieval-Augmented Generation for Knowledge-Intensive NLP",
-            "Grounded Answer Generation over Research Collections",
-            "Citation-Aware RAG for Scientific Question Answering",
-            "Chunk Selection Strategies for Literature Review Assistants",
-            "Faithfulness Checks for Retrieval-Augmented Research Tools",
-            "RAG with Structured Evidence Graphs",
-            "Context Window Allocation for Multi-Paper Questions",
-            "Auditable RAG Answers with Paper-Level Citations",
-        ],
-        "abstract": "combines retrieved scientific evidence with language generation while emphasizing citations, faithfulness, and transparent answer provenance.",
-    },
-    {
-        "slug": "knowledge-graph",
-        "keyword": "knowledge graph",
-        "titles": [
-            "PageRank and Citation-Aware Research Discovery",
-            "Knowledge Graph Construction from Scholarly Metadata",
-            "Entity Linking for Scientific Concepts and Methods",
-            "Citation Graphs Meet Retrieval-Augmented Assistants",
-            "Semantic Relation Extraction between Research Papers",
-            "Graph-Based Exploration of Research Communities",
-            "Temporal Knowledge Graphs for Topic Evolution",
-            "Interactive Scholarly Graph Interfaces",
-        ],
-        "abstract": "uses citation links, semantic relations, concepts, and temporal structure to organize scientific literature as an explorable knowledge graph.",
-    },
-    {
-        "slug": "gap-analysis",
-        "keyword": "gap suggestions",
-        "titles": [
-            "Finding Research Gaps with Connected Components",
-            "Low-Degree Nodes as Signals for Underexplored Topics",
-            "Cluster Summaries for Literature Gap Suggestions",
-            "Unaddressed Evaluation Settings in Applied AI Papers",
-            "Human-in-the-Loop Validation of Gap Recommendations",
-            "Contradiction Mining for Open Scientific Questions",
-            "From Evidence Clusters to Research Hypotheses",
-            "Cautious Gap Suggestion Interfaces for Researchers",
-        ],
-        "abstract": "identifies possible research gaps using graph clusters, sparse connections, missing evaluations, contradictions, and cautious human-readable suggestions.",
-    },
-    {
-        "slug": "evolution",
-        "keyword": "evolution chain",
-        "titles": [
-            "Modeling Scientific Topic Evolution with Citation Chains",
-            "Topological Ordering of Method Extension Graphs",
-            "Reading Plans from Research Lineage Graphs",
-            "Explaining Method Progression across Paper Collections",
-            "Timeline Summaries for Literature Review Generation",
-            "Detecting Cycles in Claims of Method Extension",
-            "Narrative Literature Reviews from Structured Chains",
-            "Pedagogical Sequencing of Foundational Papers",
-        ],
-        "abstract": "models how research topics evolve through method extensions, limitations, fixes, timelines, reading plans, and structured literature reviews.",
-    },
-    {
-        "slug": "recommendation",
-        "keyword": "recommendation",
-        "titles": [
-            "Graph Neural Networks for Scholarly Recommendation",
-            "Personalized Paper Recommendation with User Reading Histories",
-            "Cold-Start Scientific Recommendation with Abstract Embeddings",
-            "Diversity-Aware Recommendation for Literature Exploration",
-            "Serendipity Metrics for Research Discovery Systems",
-            "Citation-Enhanced Recommendations for Early Researchers",
-            "Interactive Feedback Loops in Paper Recommenders",
-            "Benchmarking Scholarly Recommendation Systems",
-        ],
-        "abstract": "recommends papers using graph neural networks, reading histories, abstracts, citation context, diversity, feedback, and benchmarking protocols.",
-    },
-    {
-        "slug": "summarization",
-        "keyword": "summarization",
-        "titles": [
-            "Scientific Paper Summarization with Section-Aware Encoders",
-            "Multi-Document Summaries for Literature Surveys",
-            "Extractive Summaries of Methods and Contributions",
-            "Abstractive Summaries Grounded in Citation Context",
-            "Comparative Summaries across Related Papers",
-            "Claim-Centric Summarization for Research Assistants",
-            "Evaluation Rubrics for Scientific Summaries",
-            "Controllable Literature Review Paragraph Generation",
-        ],
-        "abstract": "summarizes scientific papers and paper clusters using section structure, claims, comparisons, citation context, and controllable review generation.",
-    },
-    {
-        "slug": "metadata",
-        "keyword": "metadata extraction",
-        "titles": [
-            "PDF Metadata Extraction for Scholarly Archives",
-            "Title and Author Detection from Academic PDFs",
-            "Reference Parsing in Noisy Research Documents",
-            "Semantic Scholar Matching with Fuzzy Title Search",
-            "Deduplicating Uploaded and Indexed Papers",
-            "Metadata Quality Checks for Research Databases",
-            "Recovering Abstracts from Heterogeneous PDF Layouts",
-            "Practical Ingestion Pipelines for Literature Tools",
-        ],
-        "abstract": "extracts and cleans metadata from PDFs, including titles, authors, abstracts, references, duplicate detection, and indexed-paper matching.",
-    },
-    {
-        "slug": "evaluation",
-        "keyword": "evaluation",
-        "titles": [
-            "Evaluating Research Assistants for Factual Grounding",
-            "Citation Precision Metrics for Literature QA",
-            "User Studies of Graph-Based Literature Exploration",
-            "Stress Tests for Missing Citation Detection",
-            "Measuring Coverage in Literature Review Generators",
-            "Benchmark Datasets for Scientific RAG Systems",
-            "Error Taxonomies for Research Paper Chatbots",
-            "Reproducibility Protocols for Literature AI Tools",
-        ],
-        "abstract": "evaluates literature AI systems through grounding, citation precision, user studies, coverage, benchmark datasets, error taxonomies, and reproducibility.",
-    },
-    {
-        "slug": "interface",
-        "keyword": "interface",
-        "titles": [
-            "Visual Analytics for Research Paper Collections",
-            "Node-Link Interfaces for Scholarly Knowledge Graphs",
-            "Progressive Disclosure in Literature Exploration Tools",
-            "Design Patterns for AI-Assisted Research Workflows",
-            "Explainable Graph Interactions for Research Discovery",
-            "Reading Planner Interfaces for Complex Topics",
-            "Trust Calibration in AI Literature Review Tools",
-            "Workspace Design for Research Graph AI Systems",
-        ],
-        "abstract": "designs interactive interfaces for graph exploration, progressive disclosure, explainable AI workflows, reading plans, and researcher trust.",
-    },
-]
-
-
-AUTHORS = [
-    "Avery Chen",
-    "Mira Patel",
-    "Samir Rao",
-    "Lena Ortiz",
-    "Noah Williams",
-    "Hana Kim",
-    "Iris Morgan",
-    "Theo Becker",
-]
-
-
-def build_sample_papers() -> list[tuple[str, str, str, int, list[str]]]:
-    papers = []
-    for theme_index, theme in enumerate(THEMES):
-        for paper_index, title in enumerate(theme["titles"]):
-            year = 1990 + theme_index * 2 + paper_index * 4
-            authors = ", ".join(
-                [
-                    AUTHORS[(theme_index + paper_index) % len(AUTHORS)],
-                    AUTHORS[(theme_index + paper_index + 3) % len(AUTHORS)],
-                ]
-            )
-            abstract = (
-                f"This paper {theme['abstract']} It contributes to {theme['keyword']} research "
-                f"by comparing prior work, describing limitations, and outlining future research directions."
-            )
-            papers.append((title, authors, abstract, min(year, 2026), [theme["keyword"], theme["slug"]]))
-    return papers
+from app.generate_papers_pdf import generate_all_pdfs
+from app.services.embeddings import EmbeddingService, cosine_similarity, decode_embedding, encode_embedding
 
 
 def add_keyword(keyword_cache: dict[str, models.Keyword], text: str) -> models.Keyword:
-    keyword = keyword_cache.get(text)
+    clean_text = text.strip()
+    keyword = keyword_cache.get(clean_text)
     if keyword is None:
-        keyword = models.Keyword(text=text)
-        keyword_cache[text] = keyword
+        keyword = models.Keyword(text=clean_text)
+        keyword_cache[clean_text] = keyword
     return keyword
 
 
@@ -203,7 +25,7 @@ def add_edge(db, source: int, target: int, edge_type: str, label: str, confidenc
             target_paper_id=target,
             edge_type=edge_type,
             relation_label=label,
-            confidence=confidence,
+            confidence=round(confidence, 3),
         )
     )
 
@@ -212,7 +34,13 @@ def seed_database(reset: bool = True) -> None:
     init_db()
     db = SessionLocal()
     embeddings = EmbeddingService()
-    sample_papers = build_sample_papers()
+
+    # Ensure PDFs are also generated on disk
+    try:
+        generate_all_pdfs()
+    except Exception as e:
+        print(f"Warning: PDF generation failed during seed: {e}")
+
     try:
         if reset:
             db.query(models.ChatHistory).delete()
@@ -224,79 +52,107 @@ def seed_database(reset: bool = True) -> None:
             db.commit()
 
         keyword_cache: dict[str, models.Keyword] = {}
-        paper_ids: list[int] = []
-        theme_paper_ids: list[list[int]] = []
+        paper_key_to_id: dict[str, int] = {}
+        domain_papers: dict[str, list[models.Paper]] = defaultdict(list)
 
-        for theme_index, theme in enumerate(THEMES):
-            ids_for_theme: list[int] = []
-            for title, authors, abstract, year, keywords in sample_papers[
-                theme_index * 8 : theme_index * 8 + 8
-            ]:
-                body = (
-                    f"{title}\n\nAbstract\n{abstract}\n\n"
-                    f"Methods\nThe work studies {theme['keyword']} in research paper management systems.\n\n"
-                    "References\n"
+        for domain_info in DOMAINS_DATA:
+            domain_name = domain_info["domain"]
+            for p_data in domain_info["papers"]:
+                sections_text = "\n\n".join(
+                    f"{sec_title.upper()}:\n{sec_content}"
+                    for sec_title, sec_content in p_data["sections"].items()
                 )
+                full_body = (
+                    f"{p_data['title']}\n"
+                    f"Authors: {p_data['authors']}\n"
+                    f"Domain: {domain_name}\n"
+                    f"Year: {p_data['year']}\n\n"
+                    f"ABSTRACT:\n{p_data['abstract']}\n\n"
+                    f"{sections_text}"
+                )
+
+                whole_emb = embeddings.embed(f"{p_data['title']}\n{p_data['abstract']}")
+
                 paper = models.Paper(
-                    title=title,
-                    authors=authors,
-                    abstract=abstract,
-                    year=year,
+                    title=p_data["title"],
+                    authors=p_data["authors"],
+                    abstract=p_data["abstract"],
+                    year=p_data["year"],
                     source_type="indexed",
-                    full_text=body,
-                    whole_embedding=encode_embedding(embeddings.embed(f"{title}\n{abstract}")),
+                    full_text=full_body,
+                    whole_embedding=encode_embedding(whole_emb),
                 )
-                for keyword_text in sorted(set(keywords)):
-                    paper.keywords.append(add_keyword(keyword_cache, keyword_text))
+
+                # Attach domain and specific keywords
+                all_kws = set(p_data["keywords"]) | {domain_name}
+                for kw_text in sorted(all_kws):
+                    paper.keywords.append(add_keyword(keyword_cache, kw_text))
+
                 db.add(paper)
                 db.flush()
-                paper_ids.append(paper.id)
-                ids_for_theme.append(paper.id)
-                chunks = [
-                    f"{title}. {abstract}",
-                    f"This chunk discusses {theme['keyword']}, limitations, evidence, citations, and future work.",
+
+                paper_key_to_id[p_data["id_key"]] = paper.id
+                domain_papers[domain_name].append(paper)
+
+                # Store distinct structured chunks for dense RAG retrieval
+                chunks_to_index = [
+                    f"[Abstract & Overview] {p_data['title']}: {p_data['abstract']}",
+                    f"[Methodology & Design] {p_data['title']}: {p_data['sections'].get('Methodology', '')}",
+                    f"[Results & Evaluation] {p_data['title']}: {p_data['sections'].get('Results', '')}",
+                    f"[Limitations & Trade-offs] {p_data['title']}: {p_data['sections'].get('Limitations', '')}",
                 ]
-                for chunk_index, chunk_text in enumerate(chunks):
+
+                for chunk_idx, chunk_text in enumerate(chunks_to_index):
+                    chunk_emb = embeddings.embed(chunk_text)
                     db.add(
                         models.PaperChunk(
                             paper_id=paper.id,
-                            chunk_index=chunk_index,
+                            chunk_index=chunk_idx,
                             text=chunk_text,
-                            embedding=encode_embedding(embeddings.embed(chunk_text)),
+                            embedding=encode_embedding(chunk_emb),
                         )
                     )
-            theme_paper_ids.append(ids_for_theme)
 
-        for ids in theme_paper_ids:
-            for index in range(len(ids) - 1):
-                add_edge(db, ids[index], ids[index + 1], "semantic_relation", "extends", 0.82 + index * 0.015)
-                add_edge(db, ids[index + 1], ids[index], "citation", "cites", 0.88 + index * 0.01)
-            for index in range(len(ids) - 2):
-                add_edge(db, ids[index], ids[index + 2], "similarity", "similar", 0.78 + index * 0.012)
-                add_edge(db, ids[index + 2], ids[index], "similarity", "similar", 0.78 + index * 0.012)
-            add_edge(db, ids[0], ids[4], "semantic_relation", "extends", 0.74)
-            add_edge(db, ids[6], ids[2], "citation", "cites", 0.9)
+        # Build Intra-Domain graph edges (citations, method extension lineage, similarity)
+        for domain_name, papers in domain_papers.items():
+            for i in range(len(papers) - 1):
+                cur_p = papers[i]
+                nxt_p = papers[i + 1]
+                # Chronological / method extension edge
+                add_edge(db, cur_p.id, nxt_p.id, "semantic_relation", "extends", 0.88 + (i * 0.02))
+                # Citation edge: next paper cites previous paper
+                add_edge(db, nxt_p.id, cur_p.id, "citation", "cites", 0.92)
 
-        # Keep the corpus intentionally split into five demo clusters:
-        # retrieval+RAG, knowledge-graph+interface, gaps+evaluation,
-        # evolution+summarization, and recommendation+metadata.
-        cross_theme_pairs = [
-            (0, 1),
-            (2, 9),
-            (3, 8),
-            (4, 6),
-            (5, 7),
+            # Intra-domain embedding similarity edges
+            for i in range(len(papers)):
+                for j in range(i + 1, len(papers)):
+                    emb_a = decode_embedding(papers[i].whole_embedding)
+                    emb_b = decode_embedding(papers[j].whole_embedding)
+                    sim = cosine_similarity(emb_a, emb_b)
+                    if sim > 0.65:
+                        add_edge(db, papers[i].id, papers[j].id, "similarity", "similar", sim)
+                        add_edge(db, papers[j].id, papers[i].id, "similarity", "similar", sim)
+
+        # Cross-Domain Bridge Edges
+        cross_bridges = [
+            ("ai_1", "iot_5", "semantic_relation", "applies_agent_planning_in_iot", 0.82),
+            ("ml_4", "iot_1", "semantic_relation", "quantization_for_edge_sensing", 0.87),
+            ("ml_3", "nlp_2", "similarity", "dense_embedding_alignment", 0.79),
+            ("nlp_1", "ai_3", "citation", "cites_factuality_verification", 0.89),
+            ("ml_2", "sec_5", "citation", "cites_federated_optimization", 0.91),
+            ("sec_3", "ai_2", "semantic_relation", "applies_graph_reasoning_in_security", 0.84),
+            ("nlp_4", "sec_2", "similarity", "verifiable_retrieval_querying", 0.76),
+            ("iot_3", "sec_1", "citation", "cites_robustness_defenses", 0.85),
         ]
-        for left_theme, right_theme in cross_theme_pairs:
-            left = theme_paper_ids[left_theme]
-            right = theme_paper_ids[right_theme]
-            add_edge(db, left[3], right[3], "similarity", "similar", 0.83)
-            add_edge(db, right[3], left[3], "similarity", "similar", 0.83)
-            add_edge(db, left[5], right[1], "citation", "cites", 0.86)
-            add_edge(db, left[6], right[6], "semantic_relation", "applies_method_from", 0.77)
+
+        for src_key, tgt_key, etype, elabel, conf in cross_bridges:
+            if src_key in paper_key_to_id and tgt_key in paper_key_to_id:
+                src_id = paper_key_to_id[src_key]
+                tgt_id = paper_key_to_id[tgt_key]
+                add_edge(db, src_id, tgt_id, etype, elabel, conf)
 
         db.commit()
-        print(f"Seeded {len(paper_ids)} papers and {db.query(models.Edge).count()} edges.")
+        print(f"Successfully seeded database with {len(paper_key_to_id)} multi-domain papers and {db.query(models.Edge).count()} edges.")
     finally:
         db.close()
 

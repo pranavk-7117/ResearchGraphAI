@@ -1,25 +1,40 @@
 import { BookOpen, Download, GitBranch, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
+import { api, TopicItem } from "../lib/api";
 
 type EvolutionData = Awaited<ReturnType<typeof api.evolution>>;
 
-const topicPresets = [
-  "retrieval",
-  "rag",
-  "knowledge graph",
-  "gap",
-  "evolution",
-  "summarization",
-  "recommendation",
-  "metadata",
-  "interface",
-];
-
 export function EvolutionPage() {
-  const [topic, setTopic] = useState("retrieval");
+  const [topic, setTopic] = useState("Artificial Intelligence");
   const [days, setDays] = useState(5);
   const [data, setData] = useState<EvolutionData | null>(null);
+  const [availableTopics, setAvailableTopics] = useState<TopicItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    // Fetch dynamic topics from the database
+    api.topics().then((items) => {
+      setAvailableTopics(items);
+      if (items.length > 0) {
+        setTopic(items[0].topic);
+        run(items[0].topic);
+      } else {
+        run("Artificial Intelligence");
+      }
+    }).catch(() => {
+      run("Artificial Intelligence");
+    });
+  }, []);
+
+  async function run(topicToRun = topic) {
+    setLoading(true);
+    try {
+      const res = await api.evolution(topicToRun, days);
+      setData(res);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const exportText = useMemo(() => {
     if (!data) return "";
@@ -29,20 +44,12 @@ export function EvolutionPage() {
     return `Evolution Chain: ${topic}\n\nTimeline\n${timeline}\n\nTransitions\n${transitions}\n\nLiterature Review\n${data.literature_review}\n\nReading Plan\n${plan}`;
   }, [data, topic]);
 
-  useEffect(() => {
-    run();
-  }, []);
-
-  async function run() {
-    setData(await api.evolution(topic, days));
-  }
-
   function downloadReview() {
     const blob = new Blob([exportText], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "research-evolution-review.txt";
+    link.download = `evolution-${topic.toLowerCase().replace(/\s+/g, "-")}-review.txt`;
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -52,83 +59,115 @@ export function EvolutionPage() {
       <header className="pageHeader inlineHeader">
         <div>
           <h1>Evolution Chain</h1>
-          <p>Trace how a topic moves from early papers to newer fixes, gaps, and review-ready claims.</p>
+          <p>Trace how research in a domain moves from early foundations to modern extensions, open gaps, and reading plans.</p>
         </div>
         <div className="controls">
-          <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Topic" />
+          <input
+            value={topic}
+            onChange={(event) => setTopic(event.target.value)}
+            onKeyDown={(event) => event.key === "Enter" && run()}
+            placeholder="Search domain or topic..."
+          />
           <input type="number" min={1} max={30} value={days} onChange={(event) => setDays(Number(event.target.value))} />
-          <button className="primary" onClick={run}>Run</button>
+          <button className="primary" onClick={() => run()} disabled={loading}>
+            {loading ? "Analyzing..." : "Run"}
+          </button>
           <button className="secondary" onClick={downloadReview} disabled={!data}><Download size={16} /> Export</button>
         </div>
       </header>
 
-      <div className="topicPresetBar">
-        {topicPresets.map((preset) => (
+      {/* Dynamic Topic Pills */}
+      <div className="topicPresetBar" style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "14px 0" }}>
+        {availableTopics.slice(0, 10).map((item) => (
           <button
-            className={topic === preset ? "active" : ""}
-            key={preset}
+            className={topic.toLowerCase() === item.topic.toLowerCase() ? "active" : ""}
+            key={item.topic}
             onClick={() => {
-              setTopic(preset);
-              api.evolution(preset, days).then(setData);
+              setTopic(item.topic);
+              run(item.topic);
             }}
+            style={{ fontSize: 12, padding: "5px 12px", borderRadius: 16 }}
           >
-            {preset}
+            {item.topic} <span style={{ opacity: 0.6, fontSize: 10 }}>({item.count})</span>
           </button>
         ))}
       </div>
 
-      <div className="evolutionLayout">
-        <main className="evolutionMain">
-          <article className="reviewPanel">
-            <Sparkles size={18} />
-            <div>
-              <strong>Literature Review</strong>
-              <p>{data?.literature_review ?? "Run a topic to generate a connected review paragraph."}</p>
+      {data && (
+        <div className="evolutionGrid">
+          <article className="panel">
+            <div className="sectionTitle">
+              <Sparkles size={18} />
+              <h2>Literature Review</h2>
+            </div>
+            <p className="lead">{data.literature_review}</p>
+          </article>
+
+          <article className="panel">
+            <div className="sectionTitle">
+              <BookOpen size={18} />
+              <h2>Reading Plan ({days} Days)</h2>
+            </div>
+            <div className="readingPlan">
+              {data.reading_plan.map((day) => (
+                <div key={day.day} className="planDay">
+                  <strong>Day {day.day}</strong>
+                  <ul>
+                    {day.papers.length ? day.papers.map((title) => <li key={title}>{title}</li>) : <li>Synthesis and notes buffer</li>}
+                  </ul>
+                </div>
+              ))}
             </div>
           </article>
 
-          <div className="timelineRail">
-            {data?.papers?.map((paper, index) => (
-              <article className="evolutionNode" key={paper.id}>
-                <div className="yearBadge">{paper.year ?? "----"}</div>
-                <div>
-                  <h2>{paper.title}</h2>
-                  <span>{paper.authors}</span>
-                  <p>{paper.contribution}</p>
-                </div>
-                {data.steps[index] && (
-                  <div className="transitionCard">
-                    <GitBranch size={15} />
-                    <div>
-                      <strong>Next advance</strong>
-                      <p><b>Opened question:</b> {data.steps[index].left_open}</p>
-                      <p><b>{data.steps[index].to} adds:</b> {data.steps[index].next_fixed}</p>
-                    </div>
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        </main>
-
-        <aside className="readingPlanner">
-          <div className="plannerHeader">
-            <BookOpen size={18} />
-            <div>
-              <strong>{days}-Day Reading Plan</strong>
-              <span>{data?.papers.length ?? 0} papers sequenced</span>
+          <article className="panel fullWidth">
+            <div className="sectionTitle">
+              <GitBranch size={18} />
+              <h2>Methodology Transitions & Progression</h2>
             </div>
-          </div>
-          <div className="plannerDays">
-            {data?.reading_plan?.map((day) => (
-              <article key={day.day}>
-                <strong>Day {day.day}</strong>
-                <p>{day.papers.join(", ") || "Buffer day"}</p>
-              </article>
-            ))}
-          </div>
-        </aside>
-      </div>
+            <div className="stepList">
+              {data.steps.length ? (
+                data.steps.map((step, index) => (
+                  <div key={index} className="stepCard">
+                    <div className="stepHeader">
+                      <span className="stepNode">{step.from}</span>
+                      <span className="stepArrow">&rarr;</span>
+                      <span className="stepNode">{step.to}</span>
+                    </div>
+                    <div className="stepDetails">
+                      <p><strong>Solved:</strong> {step.solved}</p>
+                      <p><strong>Left open:</strong> {step.left_open}</p>
+                      <p><strong>Next fixed:</strong> {step.next_fixed}</p>
+                    </div>
+                    <p className="stepNote">{step.note}</p>
+                  </div>
+                ))
+              ) : (
+                <p>No direct extension edges found for this subset. Showing standalone chronological papers below.</p>
+              )}
+            </div>
+          </article>
+
+          <article className="panel fullWidth">
+            <div className="sectionTitle">
+              <BookOpen size={18} />
+              <h2>Topic Papers ({data.papers.length})</h2>
+            </div>
+            <div className="paperList">
+              {data.papers.map((paper) => (
+                <div key={paper.id} className="paperItem">
+                  <div className="paperItemHeader">
+                    <strong>{paper.title}</strong>
+                    <span>{paper.year ?? "N/A"}</span>
+                  </div>
+                  <p className="authors">{paper.authors}</p>
+                  <p className="contribution"><strong>Contribution:</strong> {paper.contribution}</p>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
+      )}
     </section>
   );
 }

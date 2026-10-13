@@ -1,4 +1,6 @@
+from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -94,6 +96,59 @@ def evolution(payload: schemas.ChainRequest, db: Session = Depends(get_db)):
 @router.post("/chat")
 def chat(payload: schemas.ChatRequest, db: Session = Depends(get_db)):
     return features.rag_chat(db, payload.question)
+
+
+@router.get("/topics")
+def get_topics(db: Session = Depends(get_db)):
+    """Retrieve distinct topics and domains dynamically from database keywords and paper counts."""
+    results = (
+        db.query(models.Keyword.text, func.count(models.PaperKeyword.paper_id).label("count"))
+        .join(models.PaperKeyword, models.Keyword.id == models.PaperKeyword.keyword_id)
+        .group_by(models.Keyword.id, models.Keyword.text)
+        .order_by(func.count(models.PaperKeyword.paper_id).desc(), models.Keyword.text)
+        .all()
+    )
+    return [{"topic": r[0], "count": r[1]} for r in results]
+
+
+@router.get("/sample-papers")
+def list_sample_papers():
+    """List all pre-generated domain PDF research papers available in the research_papers directory."""
+    project_root = Path(__file__).resolve().parents[3]
+    papers_dir = project_root / "research_papers"
+    if not papers_dir.exists():
+        # Fallback check for current working directory or backend sibling
+        papers_dir = Path.cwd().parent / "research_papers" if Path.cwd().name == "backend" else Path.cwd() / "research_papers"
+    if not papers_dir.exists():
+        return {"domains": [], "total_papers": 0, "directory": str(papers_dir)}
+
+    domains_list = []
+    total = 0
+    for domain_folder in sorted(papers_dir.iterdir()):
+        if domain_folder.is_dir():
+            pdfs = [
+                {
+                    "filename": f.name,
+                    "title": f.stem.replace("_", " "),
+                    "size_bytes": f.stat().st_size,
+                    "relative_path": str(f.relative_to(project_root)).replace("\\", "/"),
+                    "absolute_path": str(f.resolve()),
+                }
+                for f in sorted(domain_folder.glob("*.pdf"))
+            ]
+            total += len(pdfs)
+            domains_list.append({
+                "domain_name": domain_folder.name.replace("_Domain", "").replace("_", " "),
+                "folder_name": domain_folder.name,
+                "paper_count": len(pdfs),
+                "papers": pdfs,
+            })
+
+    return {
+        "domains": domains_list,
+        "total_papers": total,
+        "directory": str(papers_dir.resolve()),
+    }
 
 
 # --- DBMS Explorer & Query Endpoints ---

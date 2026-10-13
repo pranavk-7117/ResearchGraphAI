@@ -4,6 +4,7 @@ from app.database import Base, SessionLocal, engine, get_db_info, execute_read_o
 from app import models
 from app.services.features import FeatureService
 from app.services.pdf_ingestion import PDFIngestionService
+from app.api.routes import list_sample_papers
 
 
 def setup_module():
@@ -26,22 +27,68 @@ def test_db_info_and_query():
         db.close()
 
 
-def test_rag_chat_grounding():
+def test_rag_chat_grounding_and_anti_hallucination():
     db = SessionLocal()
     try:
         features = FeatureService()
-        res = features.rag_chat(db, "What is retrieval-augmented generation and how does it work?")
+
+        # 1. On-topic question: must answer and cite papers
+        res = features.rag_chat(db, "How does hierarchical planning coordinate autonomous multi-agent systems?")
         assert "answer" in res
         assert "citations" in res
-        assert len(res["answer"]) > 20
-        # Ensure it didn't return an empty or canned response
+        assert len(res["citations"]) > 0
+        assert "Hierarchical Planning" in res["citations"][0] or "Multi-Agent" in res["citations"][0]
         assert not res["answer"].startswith("Based on the retrieved papers, the collection points to graph-based organization")
+
+        # 2. Completely off-topic question: must refuse to hallucinate and state insufficient evidence
+        off_topic_res = features.rag_chat(db, "What is the best recipe for baking chocolate chip cookies?")
+        assert "citations" in off_topic_res
+        assert len(off_topic_res["citations"]) == 0
+        assert "cannot find direct factual evidence" in off_topic_res["answer"].lower()
+    finally:
+        db.close()
+
+
+def test_dynamic_gaps():
+    db = SessionLocal()
+    try:
+        features = FeatureService()
+        gaps = features.gap_suggestions(db)
+        assert len(gaps) > 0
+        for gap in gaps:
+            assert "cluster" in gap
+            assert "topic" in gap
+            assert "opportunity_type" in gap
+            assert "coverage_score" in gap
+            assert "weak_edge_types" in gap
+            assert len(gap["weak_edge_types"]) > 0
+            assert "research_questions" in gap
+            assert len(gap["research_questions"]) > 0
+    finally:
+        db.close()
+
+
+def test_dynamic_evolution_multi_domain():
+    db = SessionLocal()
+    try:
+        features = FeatureService()
+
+        # Evolution on AI Domain
+        ai_evo = features.evolution_chain(db, paper_ids=None, topic="Artificial Intelligence", days=5)
+        assert len(ai_evo["papers"]) >= 3
+        assert len(ai_evo["reading_plan"]) == 5
+        assert "literature_review" in ai_evo
+        assert len(ai_evo["literature_review"]) > 50
+
+        # Evolution on IoT Domain
+        iot_evo = features.evolution_chain(db, paper_ids=None, topic="Internet of Things", days=3)
+        assert len(iot_evo["papers"]) >= 3
+        assert len(iot_evo["reading_plan"]) == 3
     finally:
         db.close()
 
 
 def test_downloads_folder_save(tmp_path):
-    # Set DOWNLOADS_DIR to temporary path
     test_downloads = tmp_path / "test_downloads"
     os.environ["DOWNLOADS_DIR"] = str(test_downloads)
 
@@ -52,3 +99,13 @@ def test_downloads_folder_save(tmp_path):
     assert Path(saved).exists()
     assert Path(saved).read_bytes() == fake_pdf
     assert "demo_test_paper" in Path(saved).name
+
+
+def test_sample_papers_disk_folder():
+    res = list_sample_papers()
+    assert res["total_papers"] >= 20
+    assert len(res["domains"]) >= 5
+    domain_names = [d["domain_name"] for d in res["domains"]]
+    assert any("Artificial Intelligence" in n for n in domain_names)
+    assert any("Machine Learning" in n for n in domain_names)
+    assert any("Internet of Things" in n for n in domain_names)
