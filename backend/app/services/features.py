@@ -222,10 +222,9 @@ class FeatureService:
         if not clean_question:
             return {"answer": "Please ask a question about the indexed research papers.", "citations": []}
 
-        # 1. Vector similarity search over chunks
+        # 1. Vector similarity search over chunks in SQL (pgvector cosine distance)
         q_embedding = self.embeddings.embed(clean_question)
-        chunks = db.query(models.PaperChunk).all()
-        chunk_hits = self.vector_store.search(chunks, q_embedding, limit=8)
+        chunk_hits = self.vector_store.search_chunks(db, q_embedding, limit=8)
 
         # 2. Extract significant query keywords (excluding common stop words)
         stop_words = {

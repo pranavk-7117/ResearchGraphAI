@@ -1,31 +1,45 @@
 import os
+from pathlib import Path
 import time
 from collections.abc import Generator
 from typing import Any
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-RAW_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./research_graph.db")
+# Load environment variables from backend/.env or root .env
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR.parent / ".env")
 
-# Normalize Postgres URLs (e.g. from Supabase / Render / Heroku)
+RAW_DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not RAW_DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not configured. "
+        "Please provide a Supabase Postgres connection string in backend/.env"
+    )
+
+# Normalize Postgres URLs (e.g. postgres:// -> postgresql://)
 if RAW_DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = RAW_DATABASE_URL.replace("postgres://", "postgresql://", 1)
 else:
     DATABASE_URL = RAW_DATABASE_URL
 
-is_sqlite = DATABASE_URL.startswith("sqlite")
-
-if is_sqlite:
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    # PostgreSQL / Supabase configuration with connection pooling and pre-ping
-    engine = create_engine(
-        DATABASE_URL,
-        pool_pre_ping=True,
-        pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
-        max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
+if DATABASE_URL.startswith("sqlite"):
+    raise RuntimeError(
+        "SQLite database engine is disabled in production. "
+        "ResearchGraphAI requires Supabase PostgreSQL with the pgvector extension."
     )
+
+# Supabase PostgreSQL configuration with connection pooling and pre-ping
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=int(os.getenv("DB_POOL_SIZE", "10")),
+    max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "20")),
+)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -43,19 +57,23 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
+    """Ensure pgvector extension exists and initialize all database tables."""
     from app import models  # noqa: F401
+
+    with engine.connect() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        conn.commit()
 
     Base.metadata.create_all(bind=engine)
 
 
 def get_db_info(db: Session) -> dict[str, Any]:
-    """Retrieve DBMS metadata, table metrics, and schema information for demonstration."""
+    """Retrieve DBMS metadata, table metrics, and schema information."""
     from app import models
 
     dialect_name = engine.dialect.name
     inspector = inspect(engine)
 
-    # Count rows across all registered tables
     table_models = {
         "papers": models.Paper,
         "keywords": models.Keyword,
@@ -112,7 +130,7 @@ def get_db_info(db: Session) -> dict[str, Any]:
 
     return {
         "engine": dialect_name,
-        "is_sqlite": is_sqlite,
+        "is_sqlite": False,
         "database_url_masked": masked_url,
         "total_tables": len(tables_info),
         "total_records": total_records,
@@ -121,7 +139,7 @@ def get_db_info(db: Session) -> dict[str, Any]:
             "pool_size": getattr(engine.pool, "size", lambda: 1)(),
             "checkedin": getattr(engine.pool, "checkedin", lambda: 0)(),
             "checkedout": getattr(engine.pool, "checkedout", lambda: 0)(),
-        } if not is_sqlite else "single-process SQLite engine",
+        },
     }
 
 
@@ -130,9 +148,9 @@ def execute_read_only_query(db: Session, raw_sql: str) -> dict[str, Any]:
     cleaned = raw_sql.strip()
     first_word = cleaned.split()[0].upper() if cleaned.split() else ""
 
-    allowed_prefixes = ("SELECT", "WITH", "EXPLAIN", "PRAGMA")
+    allowed_prefixes = ("SELECT", "WITH", "EXPLAIN")
     if first_word not in allowed_prefixes:
-        raise ValueError("Only read-only queries (SELECT, WITH, EXPLAIN) are permitted in the interactive DBMS console.")
+        raise ValueError("Only read-only queries (SELECT, WITH, EXPLAIN) are permitted.")
 
     start_time = time.perf_counter()
     result = db.execute(text(cleaned))
@@ -141,7 +159,7 @@ def execute_read_only_query(db: Session, raw_sql: str) -> dict[str, Any]:
     columns = list(result.keys()) if result.returns_rows else []
     rows = []
     if result.returns_rows:
-        for row in result.fetchmany(100):  # limit to 100 rows for display
+        for row in result.fetchmany(100):
             row_dict = {}
             for col, val in zip(columns, row):
                 row_dict[col] = str(val) if val is not None else None
