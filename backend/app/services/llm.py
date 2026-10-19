@@ -1,7 +1,13 @@
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
+from dotenv import load_dotenv
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR.parent / ".env")
 
 
 class LLMService:
@@ -80,23 +86,41 @@ class LLMService:
         # 3. Groq API (if GROQ_API_KEY is configured)
         if self.provider == "groq" and os.getenv("GROQ_API_KEY"):
             try:
-                from openai import OpenAI
+                import httpx
 
-                client = OpenAI(
-                    api_key=os.getenv("GROQ_API_KEY"),
-                    base_url="https://api.groq.com/openai/v1",
-                )
-                response = client.chat.completions.create(
-                    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    messages=[
-                        {"role": "system", "content": "You are an academic research assistant. Answer strictly based on context without hallucinating. Cite papers in brackets."},
+                api_key = os.getenv("GROQ_API_KEY")
+                model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                }
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an academic research assistant for ResearchGraphAI. "
+                                "Always ground your answers strictly on the provided paper context excerpts. "
+                                "Never hallucinate claims, equations, or results. Cite sources in brackets [Paper Title]."
+                            ),
+                        },
                         {"role": "user", "content": f"{prompt}\n\nContext:\n{context}".strip()},
                     ],
-                    temperature=0.1,
+                    "temperature": 0.1,
+                }
+                resp = httpx.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=25.0,
                 )
-                ans = response.choices[0].message.content or ""
-                if ans.strip():
-                    return ans.strip()
+                if resp.status_code == 200:
+                    ans = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    if ans.strip():
+                        return ans.strip()
+                else:
+                    print(f"[LLMService] Groq API returned status {resp.status_code}: {resp.text}")
             except Exception as e:
                 print(f"[LLMService] Groq completion failed: {e}. Falling back to local dynamic synthesis.")
 
