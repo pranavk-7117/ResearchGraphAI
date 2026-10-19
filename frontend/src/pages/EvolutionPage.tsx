@@ -1,10 +1,10 @@
 import { BookOpen, Download, GitBranch, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api, TopicItem } from "../lib/api";
+import { api, EvolutionResponse, TopicItem, Workspace } from "../lib/api";
 
-type EvolutionData = Awaited<ReturnType<typeof api.evolution>>;
+type EvolutionData = EvolutionResponse;
 
-export function EvolutionPage() {
+export function EvolutionPage({ workspace }: { workspace: Workspace | null }) {
   const [topic, setTopic] = useState("Artificial Intelligence");
   const [days, setDays] = useState(5);
   const [data, setData] = useState<EvolutionData | null>(null);
@@ -29,7 +29,7 @@ export function EvolutionPage() {
   async function run(topicToRun = topic) {
     setLoading(true);
     try {
-      const res = await api.evolution(topicToRun, days);
+      const res = await api.evolution(topicToRun, days, workspace?.id);
       setData(res);
     } finally {
       setLoading(false);

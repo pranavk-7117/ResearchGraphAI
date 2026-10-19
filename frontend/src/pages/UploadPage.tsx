@@ -1,8 +1,8 @@
 import { CheckCircle2, Download, FileText, FileUp, Folder, FolderCheck, HardDrive } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, Paper, SamplePapersResponse } from "../lib/api";
+import { api, Paper, SamplePapersResponse, Workspace } from "../lib/api";
 
-export function UploadPage({ onUploaded }: { onUploaded: () => void }) {
+export function UploadPage({ onUploaded, workspace }: { onUploaded: () => void; workspace: Workspace | null }) {
   const [result, setResult] = useState<{
     paper: Paper;
     citation_edges: number;
@@ -27,7 +27,7 @@ export function UploadPage({ onUploaded }: { onUploaded: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const next = await api.upload(file);
+      const next = await api.upload(file, workspace?.id);
       setResult(next);
       onUploaded();
     } catch (err: any) {

@@ -1,11 +1,11 @@
 import { Download, MessageSquareText, Search, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, TopicItem } from "../lib/api";
+import { api, TopicItem, Workspace } from "../lib/api";
 
 type Message = { role: "user" | "assistant"; text: string; citations?: string[] };
 
-export function ChatPage() {
-  const [question, setQuestion] = useState("How does hierarchical planning coordinate autonomous multi-agent systems?");
+export function ChatPage({ workspace }: { workspace: Workspace | null }) {
+  const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const [topics, setTopics] = useState<TopicItem[]>([]);
@@ -29,7 +29,7 @@ export function ChatPage() {
     setQuestion("");
     setBusy(true);
     try {
-      const result = await api.chat(nextQuestion);
+      const result = await api.chat(nextQuestion, workspace?.id);
       setMessages((value) => [...value, { role: "assistant", text: result.answer, citations: result.citations }]);
     } finally {
       setBusy(false);

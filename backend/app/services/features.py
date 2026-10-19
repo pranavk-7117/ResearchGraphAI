@@ -12,11 +12,16 @@ from app.services.research_graph import ResearchGraph
 from app.services.vector_store import VectorStore
 
 
-def build_graph(db: Session) -> ResearchGraph:
+def build_graph(db: Session, workspace_id: int | None = None) -> ResearchGraph:
     graph = ResearchGraph()
-    for paper in db.query(models.Paper).all():
+    paper_query = db.query(models.Paper)
+    edge_query = db.query(models.Edge)
+    if workspace_id is not None:
+        paper_query = paper_query.filter(models.Paper.workspace_id == workspace_id)
+        edge_query = edge_query.filter(models.Edge.workspace_id == workspace_id)
+    for paper in paper_query.all():
         graph.add_paper(paper.id)
-    for edge in db.query(models.Edge).all():
+    for edge in edge_query.all():
         graph.add_edge(
             edge.source_paper_id,
             edge.target_paper_id,
@@ -33,19 +38,25 @@ class FeatureService:
         self.embeddings = EmbeddingService()
         self.vector_store = VectorStore()
 
-    def related_papers(self, db: Session, paper_id: int, hops: int, mode: str) -> list[models.Paper]:
-        graph = build_graph(db)
+    def related_papers(self, db: Session, paper_id: int, hops: int, mode: str, workspace_id: int | None = None) -> list[models.Paper]:
+        graph = build_graph(db, workspace_id=workspace_id)
         ids = graph.dfs(paper_id)[1:] if mode == "dfs" else graph.bfs(paper_id, hops)
         if not ids:
             return []
-        papers = db.query(models.Paper).filter(models.Paper.id.in_(ids)).all()
+        q = db.query(models.Paper).filter(models.Paper.id.in_(ids))
+        if workspace_id is not None:
+            q = q.filter(models.Paper.workspace_id == workspace_id)
+        papers = q.all()
         by_id = {paper.id: paper for paper in papers}
         return [by_id[pid] for pid in ids if pid in by_id]
 
-    def explain_connection(self, db: Session, source_id: int, target_id: int) -> dict:
-        graph = build_graph(db)
+    def explain_connection(self, db: Session, source_id: int, target_id: int, workspace_id: int | None = None) -> dict:
+        graph = build_graph(db, workspace_id=workspace_id)
         path = graph.shortest_path(source_id, target_id)
-        papers = {paper.id: paper for paper in db.query(models.Paper).all()}
+        q = db.query(models.Paper)
+        if workspace_id is not None:
+            q = q.filter(models.Paper.workspace_id == workspace_id)
+        papers = {paper.id: paper for paper in q.all()}
         path_rows = [
             {
                 "from": edge.source_id,
@@ -62,11 +73,16 @@ class FeatureService:
         sentence = self.llm.complete("Turn this path into one sentence.", str(path_rows)) if path_rows else ""
         return {"path": path_rows, "explanation": sentence}
 
-    def gap_suggestions(self, db: Session) -> list[dict]:
-        graph = build_graph(db)
-        papers = {paper.id: paper for paper in db.query(models.Paper).all()}
+    def gap_suggestions(self, db: Session, workspace_id: int | None = None) -> list[dict]:
+        graph = build_graph(db, workspace_id=workspace_id)
+        pq = db.query(models.Paper)
+        eq = db.query(models.Edge)
+        if workspace_id is not None:
+            pq = pq.filter(models.Paper.workspace_id == workspace_id)
+            eq = eq.filter(models.Edge.workspace_id == workspace_id)
+        papers = {paper.id: paper for paper in pq.all()}
         degree: dict[int, int] = defaultdict(int)
-        all_edges = db.query(models.Edge).all()
+        all_edges = eq.all()
         for edge in all_edges:
             degree[edge.source_paper_id] += 1
             degree[edge.target_paper_id] += 1
@@ -112,11 +128,16 @@ class FeatureService:
             )
         return suggestions
 
-    def missing_citations(self, db: Session) -> list[dict]:
-        papers = db.query(models.Paper).all()
+    def missing_citations(self, db: Session, workspace_id: int | None = None) -> list[dict]:
+        pq = db.query(models.Paper)
+        eq = db.query(models.Edge).filter(models.Edge.edge_type == "citation")
+        if workspace_id is not None:
+            pq = pq.filter(models.Paper.workspace_id == workspace_id)
+            eq = eq.filter(models.Edge.workspace_id == workspace_id)
+        papers = pq.all()
         citation_pairs = {
             (edge.source_paper_id, edge.target_paper_id)
-            for edge in db.query(models.Edge).filter(models.Edge.edge_type == "citation")
+            for edge in eq.all()
         }
         flags = []
         for newer in papers:
@@ -136,12 +157,14 @@ class FeatureService:
                     )
         return flags
 
-    def evolution_chain(self, db: Session, paper_ids: list[int] | None, topic: str | None, days: int) -> dict:
+    def evolution_chain(self, db: Session, paper_ids: list[int] | None, topic: str | None, days: int, workspace_id: int | None = None) -> dict:
         """
         Build an authentic research topic evolution chain.
         Orders papers by topological lineage of method extension and publication timeline.
         """
         query = db.query(models.Paper)
+        if workspace_id is not None:
+            query = query.filter(models.Paper.workspace_id == workspace_id)
         if paper_ids:
             papers = query.filter(models.Paper.id.in_(paper_ids)).all()
         elif topic and topic.strip():
@@ -178,7 +201,7 @@ class FeatureService:
         if not papers:
             papers = query.limit(8).all()
 
-        graph = build_graph(db)
+        graph = build_graph(db, workspace_id=workspace_id)
         ordered_ids = graph.topo_sort_extends_chain([paper.id for paper in papers])
         by_id = {paper.id: paper for paper in papers}
         ordered = [by_id[pid] for pid in ordered_ids if pid in by_id]
@@ -212,7 +235,7 @@ class FeatureService:
             "literature_review": review,
         }
 
-    def rag_chat(self, db: Session, question: str) -> dict:
+    def rag_chat(self, db: Session, question: str, workspace_id: int | None = None) -> dict:
         """
         Strict, zero-hallucination RAG question answering.
         Retrieves top dense chunks and relevant papers. If off-topic or insufficient
@@ -224,7 +247,7 @@ class FeatureService:
 
         # 1. Vector similarity search over chunks in SQL (pgvector cosine distance)
         q_embedding = self.embeddings.embed(clean_question)
-        chunk_hits = self.vector_store.search_chunks(db, q_embedding, limit=8)
+        chunk_hits = self.vector_store.search_chunks(db, q_embedding, limit=8, workspace_id=workspace_id)
 
         # 2. Extract significant query keywords (excluding common stop words)
         stop_words = {
@@ -242,7 +265,10 @@ class FeatureService:
 
         matched_papers = []
         if sql_filters:
-            matched_papers = db.query(models.Paper).filter(or_(*sql_filters)).limit(5).all()
+            q = db.query(models.Paper).filter(or_(*sql_filters))
+            if workspace_id is not None:
+                q = q.filter(models.Paper.workspace_id == workspace_id)
+            matched_papers = q.limit(5).all()
 
         # Check if any chunk actually contains query keywords
         lexical_chunk_hits = [
@@ -253,7 +279,8 @@ class FeatureService:
 
         # Guard against zero-evidence hallucination (off-topic queries with no matches)
         if not matched_papers and not lexical_chunk_hits:
-            available_kws = [k.text for k in db.query(models.Keyword).limit(8).all()]
+            kw_q = db.query(models.Keyword)
+            available_kws = [k.text for k in kw_q.limit(8).all()]
             topics_str = ", ".join(available_kws) if available_kws else "AI, Machine Learning, IoT, NLP, Cybersecurity"
             return {
                 "answer": (
@@ -287,7 +314,8 @@ class FeatureService:
                 break
 
         if not context_blocks:
-            available_kws = [k.text for k in db.query(models.Keyword).limit(8).all()]
+            kw_q = db.query(models.Keyword)
+            available_kws = [k.text for k in kw_q.limit(8).all()]
             topics_str = ", ".join(available_kws) if available_kws else "AI, Machine Learning, IoT, NLP, Cybersecurity"
             return {
                 "answer": (
@@ -317,6 +345,7 @@ class FeatureService:
         cited_paper_titles = [paper.title for paper in cited_papers_map.values()]
         db.add(
             models.ChatHistory(
+                workspace_id=workspace_id,
                 question=clean_question,
                 answer=answer,
                 cited_paper_ids=",".join(str(pid) for pid in cited_papers_map.keys()),
@@ -560,3 +589,94 @@ class FeatureService:
             f"Recent advances culminate in '{last.title}', which {last_contrib.lower()}. "
             f"A pivotal unresolved question across the lineage remains {unresolved}."
         )
+
+    def compare_paper(self, db: Session, user_paper: models.Paper, workspace_id: int | None = None) -> dict:
+        """
+        Compare the user's uploaded paper against the workspace literature.
+        Returns nearest neighbours, side-by-side facts, novelty score, suggested citations,
+        and a reviewer-style critique — all grounded in retrieved evidence.
+        """
+        from app.services.embeddings import decode_embedding
+
+        # 1. Find nearest neighbours by embedding
+        neighbours = self.vector_store.search_papers(
+            db, list(decode_embedding(user_paper.whole_embedding)),
+            limit=8, exclude_paper_id=user_paper.id, workspace_id=workspace_id
+        )
+
+        # 2. Build novelty score: average distance from top-5 neighbours (lower similarity → more novel)
+        top5_scores = [score for score, _ in neighbours[:5]] if neighbours else []
+        avg_similarity = round(sum(top5_scores) / len(top5_scores), 3) if top5_scores else 0.0
+        novelty_score = round(max(0.0, 1.0 - avg_similarity), 3)
+
+        # 3. Suggested citations: workspace papers not already in user paper's reference list
+        # (use the top neighbours as suggestions)
+        suggested_citations = [
+            {
+                "title": paper.title,
+                "authors": paper.authors,
+                "year": paper.year,
+                "similarity_score": score,
+                "reason": f"Cosine similarity {score:.3f} — highly related content",
+            }
+            for score, paper in neighbours[:5]
+        ]
+
+        # 4. Side-by-side facts comparison
+        user_contrib = self._paper_contribution(user_paper)
+        user_limit = self._limitation(user_paper)
+        comparisons = []
+        for score, neighbour in neighbours[:4]:
+            comparisons.append({
+                "neighbour_title": neighbour.title,
+                "neighbour_year": neighbour.year,
+                "neighbour_authors": neighbour.authors,
+                "similarity_score": score,
+                "neighbour_contribution": self._paper_contribution(neighbour),
+                "neighbour_limitation": self._limitation(neighbour),
+                "user_contribution": user_contrib,
+                "user_limitation": user_limit,
+            })
+
+        # 5. Reviewer-style critique (evidence-grounded)
+        evidence_context = "\n\n".join(
+            f"[{paper.title} ({paper.year})]:\n{paper.abstract[:500]}"
+            for _, paper in neighbours[:4]
+            if paper.abstract
+        )
+        critique_prompt = (
+            f"You are a peer reviewer. The user's paper is titled '{user_paper.title}'. "
+            f"Its stated contribution is: {user_contrib}. "
+            f"Its acknowledged limitations include: {user_limit}.\n\n"
+            "Based ONLY on the following related literature, provide a 3-5 sentence critique addressing: "
+            "(a) whether the contribution appears novel relative to the corpus, "
+            "(b) which cited works it should compare against more explicitly, "
+            "(c) what gap it may be filling.\n\n"
+            "Do NOT invent papers. Only reference those listed below.\n\n"
+            f"Related literature:\n{evidence_context}"
+        )
+        critique = self.llm.complete(critique_prompt, context=evidence_context)
+
+        return {
+            "user_paper": {
+                "id": user_paper.id,
+                "title": user_paper.title,
+                "authors": user_paper.authors,
+                "year": user_paper.year,
+                "abstract": user_paper.abstract,
+                "contribution": user_contrib,
+                "limitation": user_limit,
+            },
+            "novelty_score": novelty_score,
+            "novelty_formula": "1 - avg_cosine_similarity(user_paper, top_5_neighbours)",
+            "avg_similarity_to_corpus": avg_similarity,
+            "nearest_neighbours_count": len(neighbours),
+            "suggested_citations": suggested_citations,
+            "comparisons": comparisons,
+            "critique": critique,
+            "scope_note": (
+                "This analysis is limited to papers currently in this workspace. "
+                "A low novelty score relative to the corpus does not confirm the work is unpublished "
+                "or definitively novel — it indicates differentiation from the indexed literature."
+            ),
+        }

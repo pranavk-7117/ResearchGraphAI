@@ -31,7 +31,8 @@ class PDFIngestionService:
         self.llm = LLMService()
 
     def ingest_pdf(
-        self, db: Session, file_bytes: bytes, original_filename: str = "paper.pdf"
+        self, db: Session, file_bytes: bytes, original_filename: str = "paper.pdf",
+        workspace_id: int | None = None, is_user_paper: bool = False
     ) -> IngestedPaper:
         import fitz
 
@@ -49,6 +50,7 @@ class PDFIngestionService:
         )
         whole_embedding = self.embeddings.embed(f"{metadata['title']}\n{metadata['abstract']}")
         paper = models.Paper(
+            workspace_id=workspace_id,
             title=metadata["title"],
             authors=metadata["authors"],
             abstract=metadata["abstract"],
@@ -56,13 +58,14 @@ class PDFIngestionService:
             source_type=metadata["source_type"],
             full_text=full_text,
             whole_embedding=encode_embedding(whole_embedding),
+            is_user_paper=is_user_paper,
         )
         db.add(paper)
         db.commit()
         db.refresh(paper)
-        self._store_chunks(db, paper.id, full_text)
-        citation_count = self._link_references(db, paper.id, full_text)
-        similarity_count = self._link_similar_papers(db, paper, whole_embedding)
+        self._store_chunks(db, paper.id, full_text, workspace_id=workspace_id)
+        citation_count = self._link_references(db, paper.id, full_text, workspace_id=workspace_id)
+        similarity_count = self._link_similar_papers(db, paper, whole_embedding, workspace_id=workspace_id)
         db.commit()
         return IngestedPaper(paper, citation_count, similarity_count, saved_file_path)
 
@@ -149,7 +152,7 @@ class PDFIngestionService:
         )
         return re.sub(r"\s+", " ", match.group(1)).strip()[:3000] if match else ""
 
-    def _store_chunks(self, db: Session, paper_id: int, text: str) -> None:
+    def _store_chunks(self, db: Session, paper_id: int, text: str, workspace_id: int | None = None) -> None:
         words = text.split()
         for index in range(0, len(words), 250):
             chunk = " ".join(words[index : index + 250])
@@ -157,6 +160,7 @@ class PDFIngestionService:
                 continue
             db.add(
                 models.PaperChunk(
+                    workspace_id=workspace_id,
                     paper_id=paper_id,
                     chunk_index=index // 250,
                     text=chunk,
@@ -164,11 +168,14 @@ class PDFIngestionService:
                 )
             )
 
-    def _link_references(self, db: Session, paper_id: int, text: str) -> int:
+    def _link_references(self, db: Session, paper_id: int, text: str, workspace_id: int | None = None) -> int:
         reference_text = self._reference_section(text)
         if not reference_text:
             return 0
-        known = db.query(models.Paper).filter(models.Paper.id != paper_id).all()
+        q = db.query(models.Paper).filter(models.Paper.id != paper_id)
+        if workspace_id is not None:
+            q = q.filter(models.Paper.workspace_id == workspace_id)
+        known = q.all()
         count = 0
         for line in reference_text.splitlines():
             if len(line.strip()) < 20:
@@ -177,6 +184,7 @@ class PDFIngestionService:
             if best and fuzz.token_set_ratio(line, best.title) > 86:
                 db.add(
                     models.Edge(
+                        workspace_id=workspace_id,
                         source_paper_id=paper_id,
                         target_paper_id=best.id,
                         edge_type="citation",
@@ -192,15 +200,19 @@ class PDFIngestionService:
         return match.group(2) if match else ""
 
     def _link_similar_papers(
-        self, db: Session, paper: models.Paper, embedding: list[float], threshold: float = 0.75
+        self, db: Session, paper: models.Paper, embedding: list[float], threshold: float = 0.75, workspace_id: int | None = None
     ) -> int:
-        others = db.query(models.Paper).filter(models.Paper.id != paper.id).all()
+        q = db.query(models.Paper).filter(models.Paper.id != paper.id)
+        if workspace_id is not None:
+            q = q.filter(models.Paper.workspace_id == workspace_id)
+        others = q.all()
         count = 0
         for other in others:
             score = cosine_similarity(embedding, decode_embedding(other.whole_embedding))
             if score > threshold:
                 db.add(
                     models.Edge(
+                        workspace_id=workspace_id,
                         source_paper_id=paper.id,
                         target_paper_id=other.id,
                         edge_type="similarity",
@@ -210,6 +222,7 @@ class PDFIngestionService:
                 )
                 db.add(
                     models.Edge(
+                        workspace_id=workspace_id,
                         source_paper_id=other.id,
                         target_paper_id=paper.id,
                         edge_type="similarity",

@@ -1,38 +1,17 @@
 import { AlertTriangle, CheckCircle2, GitBranch, Lightbulb, Network, Target } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../lib/api";
+import { api, GapSuggestion, GapsResponse, Workspace } from "../lib/api";
 
-type GapSuggestion = {
-  cluster: number;
-  topic: string;
-  opportunity_type: string;
-  paper_count: number;
-  edge_count: number;
-  average_degree: number;
-  coverage_score: number;
-  weak_edge_types: string[];
-  candidate_papers: string[];
-  bridge_candidates: string[];
-  research_questions: string[];
-  next_steps: string[];
-  suggestion: string;
-};
-
-type GapData = {
-  gap_suggestions: GapSuggestion[];
-  missing_citations: { paper: string; may_need_citation: string; similarity: number }[];
-};
-
-export function GapsPage() {
-  const [data, setData] = useState<GapData | null>(null);
+export function GapsPage({ workspace }: { workspace: Workspace | null }) {
+  const [data, setData] = useState<GapsResponse | null>(null);
   const [selectedCluster, setSelectedCluster] = useState<number | "all">("all");
 
   useEffect(() => {
-    api.gaps().then((result) => {
+    api.gaps(workspace?.id).then((result) => {
       setData(result);
       setSelectedCluster(result.gap_suggestions[0]?.cluster ?? "all");
     });
-  }, []);
+  }, [workspace?.id]);
 
   const selectedGap = useMemo(() => {
     if (!data) return null;

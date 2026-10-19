@@ -57,7 +57,7 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Ensure pgvector extension exists and initialize all database tables."""
+    """Ensure pgvector extension exists and initialize all database tables and extensions."""
     from app import models  # noqa: F401
 
     with engine.connect() as conn:
@@ -65,6 +65,30 @@ def init_db() -> None:
         conn.commit()
 
     Base.metadata.create_all(bind=engine)
+
+    # Idempotent additive column migrations for PostgreSQL
+    if engine.dialect.name == "postgresql":
+        alter_statements = [
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE;",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS doi VARCHAR(255);",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS citation_count INTEGER DEFAULT 0;",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS venue VARCHAR(255);",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS url TEXT;",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS pdf_url TEXT;",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS tldr TEXT;",
+            "ALTER TABLE papers ADD COLUMN IF NOT EXISTS is_user_paper BOOLEAN DEFAULT FALSE;",
+            "ALTER TABLE edges ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE;",
+            "ALTER TABLE paper_chunks ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE;",
+            "ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE;",
+            "ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;",
+        ]
+        with engine.begin() as conn:
+            for stmt in alter_statements:
+                try:
+                    conn.execute(text(stmt))
+                except Exception:
+                    pass
 
 
 def get_db_info(db: Session) -> dict[str, Any]:
@@ -75,11 +99,14 @@ def get_db_info(db: Session) -> dict[str, Any]:
     inspector = inspect(engine)
 
     table_models = {
+        "workspaces": models.Workspace,
         "papers": models.Paper,
         "keywords": models.Keyword,
         "paper_keywords": models.PaperKeyword,
         "edges": models.Edge,
         "paper_chunks": models.PaperChunk,
+        "paper_facts": models.PaperFact,
+        "jobs": models.Job,
         "chat_history": models.ChatHistory,
     }
 

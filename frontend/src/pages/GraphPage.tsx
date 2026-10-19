@@ -1,7 +1,7 @@
 import ForceGraph2D from "react-force-graph-2d";
 import { Check, Filter, Focus, Pencil, Route, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, Edge, Paper, PaperUpdate } from "../lib/api";
+import { api, Edge, Paper, PaperUpdate, Workspace } from "../lib/api";
 
 type EdgeType = "citation" | "similarity" | "semantic_relation";
 type GraphNode = Paper & { name: string; x: number; y: number };
@@ -44,7 +44,7 @@ function useElementSize<T extends HTMLElement>() {
   return { ref, size };
 }
 
-export function GraphPage({ papers, onChanged }: { papers: Paper[]; onChanged: () => void }) {
+export function GraphPage({ papers, onChanged, workspace }: { papers: Paper[]; onChanged: () => void; workspace: Workspace | null }) {
   const graphRef = useRef<any>(null);
   const { ref: canvasRef, size } = useElementSize<HTMLDivElement>();
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -67,8 +67,8 @@ export function GraphPage({ papers, onChanged }: { papers: Paper[]; onChanged: (
   const [draft, setDraft] = useState<PaperUpdate | null>(null);
 
   useEffect(() => {
-    api.graph().then((data) => setEdges(data.edges));
-  }, [papers.length]);
+    api.graph(workspace?.id).then((data) => setEdges(data.edges));
+  }, [papers.length, workspace?.id]);
 
   useEffect(() => {
     if (!selected) return;
@@ -177,14 +177,14 @@ export function GraphPage({ papers, onChanged }: { papers: Paper[]; onChanged: (
 
   async function explain() {
     if (!selected || !target) return;
-    const result = await api.explain(selected.id, Number(target));
+    const result = await api.explain(selected.id, Number(target), workspace?.id);
     setPathRows(result.path);
     setExplanation(result.explanation || "No directed path found between those papers.");
   }
 
   async function loadRelated(nextMode = mode, nextHops = hops) {
     if (!selected) return;
-    const result = await api.related(selected.id, nextHops, nextMode);
+    const result = await api.related(selected.id, nextHops, nextMode, workspace?.id);
     setRelated(result);
   }
 

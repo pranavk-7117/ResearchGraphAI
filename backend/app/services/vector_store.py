@@ -16,6 +16,7 @@ class VectorStore:
         query_embedding: list[float],
         limit: int = 5,
         paper_ids: list[int] | None = None,
+        workspace_id: int | None = None,
     ) -> list[tuple[float, models.PaperChunk]]:
         """
         Execute chunk similarity search directly in SQL using pgvector's cosine distance operator (<=>).
@@ -24,6 +25,8 @@ class VectorStore:
             models.PaperChunk,
             models.PaperChunk.embedding.cosine_distance(query_embedding).label("distance"),
         )
+        if workspace_id is not None:
+            query = query.filter(models.PaperChunk.workspace_id == workspace_id)
         if paper_ids:
             query = query.filter(models.PaperChunk.paper_id.in_(paper_ids))
         results = query.order_by("distance").limit(limit).all()
@@ -35,6 +38,7 @@ class VectorStore:
         query_embedding: list[float],
         limit: int = 5,
         exclude_paper_id: int | None = None,
+        workspace_id: int | None = None,
     ) -> list[tuple[float, models.Paper]]:
         """
         Execute paper similarity search directly in SQL using pgvector's cosine distance operator (<=>).
@@ -43,6 +47,8 @@ class VectorStore:
             models.Paper,
             models.Paper.whole_embedding.cosine_distance(query_embedding).label("distance"),
         ).filter(models.Paper.whole_embedding.is_not(None))
+        if workspace_id is not None:
+            query = query.filter(models.Paper.workspace_id == workspace_id)
         if exclude_paper_id is not None:
             query = query.filter(models.Paper.id != exclude_paper_id)
         results = query.order_by("distance").limit(limit).all()
