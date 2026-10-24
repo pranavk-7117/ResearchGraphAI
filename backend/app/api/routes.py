@@ -160,7 +160,7 @@ def delete_project(
 def trigger_discovery(
     project_id: int,
     limit: int = Query(25, ge=5, le=100),
-    ranking_mode: str = Query("balanced", regex="^(balanced|relevant|recent|citations)$"),
+    ranking_mode: str = Query("balanced", pattern="^(balanced|relevant|recent|citations)$"),
     year_min: int | None = Query(None),
     year_max: int | None = Query(None),
     oa_only: bool = Query(False),

@@ -4,7 +4,7 @@ Tests for PDF Parsing, Page/Section Preservation, OCR Detection, and Storage.
 
 import pytest
 from fastapi import HTTPException
-import fitz
+import pymupdf
 
 from app.services.pdf_processing import PDFProcessingService
 from app.storage import StorageService
@@ -25,7 +25,7 @@ def test_pdf_validation_empty_and_corrupt():
 
 def test_pdf_ocr_needed_detection():
     # Create a 1-page blank PDF with no text
-    doc = fitz.open()
+    doc = pymupdf.open()
     doc.new_page()
     blank_bytes = doc.tobytes()
     doc.close()
@@ -38,7 +38,7 @@ def test_pdf_ocr_needed_detection():
 
 def test_pdf_page_and_section_preservation():
     # Create a multi-page PDF with sections and text
-    doc = fitz.open()
+    doc = pymupdf.open()
     p1 = doc.new_page()
     p1.insert_text((50, 72), "Abstract\nThis study investigates zero-knowledge proof scalability in distributed systems.")
     p1.insert_text((50, 150), "1. Introduction\nDecentralized verification requires sub-linear cryptographic proofs.")
@@ -68,7 +68,7 @@ def test_pdf_page_and_section_preservation():
 def test_storage_service_save_and_retrieve():
     storage = StorageService()
     # Create dummy PDF bytes
-    doc = fitz.open()
+    doc = pymupdf.open()
     doc.new_page().insert_text((50, 72), "Storage verification document content.")
     content = doc.tobytes()
     doc.close()

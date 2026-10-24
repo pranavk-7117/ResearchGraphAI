@@ -9,7 +9,7 @@ import hashlib
 import os
 import re
 from typing import Any
-import fitz  # PyMuPDF
+import pymupdf
 from pydantic import BaseModel
 
 from app.services.llm import LLMService
@@ -61,7 +61,7 @@ class PDFProcessingService:
             return PDFExtractionResult(is_empty=True, total_bytes=len(pdf_bytes))
 
         try:
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
         except Exception as e:
             raise RuntimeError(f"Corrupt or encrypted PDF could not be opened: {e}") from e
 
