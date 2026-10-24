@@ -1,216 +1,265 @@
-import { AlertCircle, BookOpen, CheckCircle2, FileUp, Lightbulb, Star } from "lucide-react";
-import { useState } from "react";
-import { api, CompareResponse, Workspace } from "../lib/api";
+import {
+  AlertCircle,
+  CheckCircle2,
+  FileText,
+  FileUp,
+  GitMerge,
+  HelpCircle,
+  Layers,
+  Sparkles,
+} from "lucide-react";
+import { useEffect, useState } from "react";
+import { api, PaperAnalysis, Project } from "../lib/api";
 
-type Props = { workspace: Workspace | null };
-
-export function ComparePage({ workspace }: Props) {
+export function ComparePage({ project }: { project: Project | null }) {
+  const [analyses, setAnalyses] = useState<PaperAnalysis[]>([]);
+  const [selectedAnalysis, setSelectedAnalysis] = useState<PaperAnalysis | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [comparing, setComparing] = useState(false);
-  const [result, setResult] = useState<CompareResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  if (!workspace) {
+  useEffect(() => {
+    if (project) {
+      loadAnalyses();
+    }
+  }, [project?.id]);
+
+  async function loadAnalyses() {
+    if (!project) return;
+    try {
+      const data = await api.upload.listAnalyses(project.id);
+      setAnalyses(data);
+      if (data.length > 0 && !selectedAnalysis) {
+        setSelectedAnalysis(data[0]);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleUpload(file: File) {
+    if (!project) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const analysis = await api.upload.compare(project.id, file);
+      setSelectedAnalysis(analysis);
+      await loadAnalyses();
+    } catch (err: any) {
+      setError(err?.message || "Failed to upload and compare manuscript.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  if (!project) {
     return (
-      <section className="page">
-        <header className="pageHeader">
-          <h1>Compare My Paper</h1>
-          <p>Upload your research paper to compare it against the workspace literature.</p>
-        </header>
-        <div style={{ textAlign: "center", padding: 60, color: "#94a3b8" }}>
-          <BookOpen size={40} style={{ margin: "0 auto 12px", display: "block", opacity: 0.4 }} />
-          <p>Select a workspace first to compare your paper against its literature.</p>
-        </div>
+      <section className="page" style={{ maxWidth: 800, margin: "40px auto", textAlign: "center" }}>
+        <GitMerge size={48} color="#94a3b8" style={{ margin: "0 auto 16px" }} />
+        <h2>No Active Research Project</h2>
+        <p style={{ color: "#64748b" }}>Please select a research project to compare uploaded manuscripts.</p>
       </section>
     );
   }
 
-  async function handleUpload(file: File) {
-    setError(null);
-    setResult(null);
-    setUploading(true);
-    try {
-      await api.uploadMyPaper(workspace!.id, file);
-      setUploading(false);
-      setComparing(true);
-      const compare = await api.compareMyPaper(workspace!.id);
-      setResult(compare);
-    } catch (err: any) {
-      setError(err?.message || "Failed to upload or compare paper.");
-    } finally {
-      setUploading(false);
-      setComparing(false);
-    }
-  }
-
-  const noveltyColor = result
-    ? result.novelty_score > 0.6
-      ? "#16a34a"
-      : result.novelty_score > 0.35
-      ? "#d97706"
-      : "#dc2626"
-    : "#2563eb";
+  const report = selectedAnalysis?.report || {};
 
   return (
-    <section className="page comparePage">
-      <header className="pageHeader inlineHeader">
+    <section className="page comparePage" style={{ maxWidth: 1100, margin: "0 auto", paddingBottom: 60 }}>
+      <header className="pageHeader">
         <div>
-          <h1>Compare My Paper</h1>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#2563eb", textTransform: "uppercase" }}>
+            Manuscript Assessment
+          </span>
+          <h1>Upload & Literature Comparison: "{project.topic}"</h1>
           <p>
-            Upload your research PDF to compare it against the <strong>{workspace.topic}</strong> workspace literature
-            ({workspace.paper_count} papers). Evidence-grounded — no fabricated claims.
+            Drop in an academic draft or pre-print to benchmark its contributions, gap alignment, methodology,
+            and missing comparisons against your project's indexed corpus.
           </p>
         </div>
       </header>
 
-      {/* Upload zone */}
-      <label className="dropZone" style={{ marginBottom: 24 }}>
-        <FileUp size={32} color="#2563eb" />
-        <strong style={{ fontSize: 15 }}>
-          {uploading ? "Uploading & ingesting PDF…" : comparing ? "Running comparison…" : "Upload Your Paper (PDF)"}
+      {/* Upload Drop Zone */}
+      <label
+        className="dropZone"
+        style={{
+          border: "2px dashed #cbd5e1",
+          borderRadius: 8,
+          padding: 32,
+          textAlign: "center",
+          background: "#f8fafc",
+          display: "block",
+          cursor: uploading ? "wait" : "pointer",
+          marginBottom: 24,
+        }}
+      >
+        <FileUp size={36} color="#2563eb" style={{ margin: "0 auto 8px" }} />
+        <strong style={{ fontSize: 15, display: "block", marginBottom: 4 }}>
+          {uploading ? "Ingesting and benchmarking manuscript against corpus..." : "Choose a Manuscript PDF to Compare"}
         </strong>
-        <span style={{ color: "#64748b", fontSize: 13 }}>
-          Your paper will be marked separately from the corpus and compared against workspace papers
+        <span style={{ fontSize: 12, color: "#64748b" }}>
+          PDF will be securely uploaded to private storage, parsed per-page, and evaluated against the active corpus
         </span>
         <input
           type="file"
           accept="application/pdf"
-          disabled={uploading || comparing}
+          disabled={uploading}
           onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+          style={{ display: "none" }}
         />
       </label>
 
       {error && (
-        <div style={{ padding: 14, background: "#fee2e2", color: "#991b1b", borderRadius: 8, marginBottom: 20, fontSize: 13 }}>
-          <AlertCircle size={14} style={{ verticalAlign: "middle", marginRight: 6 }} />
-          {error}
+        <div style={{ padding: 16, background: "#fee2e2", color: "#991b1b", borderRadius: 8, marginBottom: 20 }}>
+          <strong>Error:</strong> {error}
         </div>
       )}
 
-      {result && (
-        <div className="compareLayout">
-          {/* Novelty score card */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
-            <article className="panel" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 42, fontWeight: 800, color: noveltyColor }}>{Math.round(result.novelty_score * 100)}</div>
-              <div style={{ fontSize: 13, color: "#475569" }}>Novelty Score / 100</div>
-              <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>{result.novelty_formula}</div>
-            </article>
-            <article className="panel" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 42, fontWeight: 800, color: "#2563eb" }}>{Math.round(result.avg_similarity_to_corpus * 100)}%</div>
-              <div style={{ fontSize: 13, color: "#475569" }}>Avg Similarity to Corpus</div>
-            </article>
-            <article className="panel" style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 42, fontWeight: 800, color: "#7c3aed" }}>{result.nearest_neighbours_count}</div>
-              <div style={{ fontSize: 13, color: "#475569" }}>Related Papers Found</div>
-            </article>
+      {/* Prior Analyses Switcher */}
+      {analyses.length > 1 && (
+        <div style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 20, paddingBottom: 6 }}>
+          {analyses.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => setSelectedAnalysis(a)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: selectedAnalysis?.id === a.id ? "1.5px solid #2563eb" : "1px solid #cbd5e1",
+                background: selectedAnalysis?.id === a.id ? "#eff6ff" : "white",
+                color: selectedAnalysis?.id === a.id ? "#1d4ed8" : "#475569",
+                fontSize: 12,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {a.paper_title.slice(0, 30)}...
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Analysis Report Card */}
+      {selectedAnalysis ? (
+        <article className="panel" style={{ padding: 24, background: "white", border: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+            <div>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 10,
+                  background: "#dcfce7",
+                  color: "#166534",
+                }}
+              >
+                Benchmarked Against Corpus
+              </span>
+              <h2 style={{ fontSize: 18, fontWeight: 700, margin: "8px 0 4px", color: "#0f172a" }}>
+                {selectedAnalysis.paper_title}
+              </h2>
+            </div>
           </div>
 
-          {/* Your paper info */}
-          <article className="panel" style={{ marginBottom: 20 }}>
-            <div className="sectionTitle">
-              <Star size={16} />
-              <h2>Your Paper</h2>
+          {/* Semantic Distance Disclosure */}
+          {report.semantic_distance_label && (
+            <div
+              style={{
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                padding: "10px 14px",
+                borderRadius: 6,
+                fontSize: 12,
+                color: "#166534",
+                marginBottom: 20,
+              }}
+            >
+              <strong>Semantic Distance Provenance:</strong> {report.semantic_distance_label}
             </div>
-            <h3 style={{ margin: "0 0 4px" }}>{result.user_paper.title}</h3>
-            <p style={{ color: "#475569", fontSize: 13, margin: "0 0 12px" }}>{result.user_paper.authors} · {result.user_paper.year}</p>
-            <p><strong>Contribution:</strong> {result.user_paper.contribution}</p>
-            <p><strong>Limitation:</strong> {result.user_paper.limitation}</p>
-          </article>
+          )}
 
-          {/* Reviewer critique */}
-          <article className="panel" style={{ marginBottom: 20, borderLeft: "4px solid #7c3aed" }}>
-            <div className="sectionTitle">
-              <Lightbulb size={16} />
-              <h2>Reviewer-Style Critique</h2>
+          {/* Section: Overview & Problem */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+            <div style={{ background: "#f8fafc", padding: 14, borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <strong style={{ fontSize: 13, color: "#0f172a", display: "block", marginBottom: 4 }}>
+                Premise & Overview:
+              </strong>
+              <p style={{ fontSize: 13, color: "#334155", margin: 0, lineHeight: 1.5 }}>
+                {report.overview || "Overview extracted from manuscript"}
+              </p>
             </div>
-            <p style={{ lineHeight: 1.7 }}>{result.critique}</p>
-            <p style={{ fontSize: 11, color: "#94a3b8", marginTop: 12, fontStyle: "italic" }}>{result.scope_note}</p>
-          </article>
+            <div style={{ background: "#f8fafc", padding: 14, borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <strong style={{ fontSize: 13, color: "#0f172a", display: "block", marginBottom: 4 }}>
+                Core Problem Addressed:
+              </strong>
+              <p style={{ fontSize: 13, color: "#334155", margin: 0, lineHeight: 1.5 }}>
+                {report.problem || "Problem defined in manuscript"}
+              </p>
+            </div>
+          </div>
 
-          {/* Suggested citations */}
-          <article className="panel" style={{ marginBottom: 20 }}>
-            <div className="sectionTitle">
-              <CheckCircle2 size={16} />
-              <h2>Suggested Citations ({result.suggested_citations.length})</h2>
+          {/* Claimed Contributions */}
+          {report.claimed_contributions && report.claimed_contributions.length > 0 && (
+            <div style={{ marginBottom: 20 }}>
+              <strong style={{ fontSize: 13, color: "#0f172a", display: "block", marginBottom: 8 }}>
+                Claimed Scientific Contributions:
+              </strong>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#334155", lineHeight: 1.6 }}>
+                {report.claimed_contributions.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {result.suggested_citations.map((cit) => (
-                <div
-                  key={cit.title}
-                  style={{ padding: "12px 16px", background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}
-                >
-                  <div style={{ fontWeight: 600, color: "#0f172a" }}>{cit.title}</div>
-                  <div style={{ fontSize: 12, color: "#475569" }}>{cit.authors} · {cit.year}</div>
-                  <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>{cit.reason}</div>
-                  <div
-                    style={{
-                      display: "inline-block",
-                      marginTop: 6,
-                      padding: "2px 8px",
-                      background: "#eff6ff",
-                      color: "#1d4ed8",
-                      borderRadius: 12,
-                      fontSize: 11,
-                    }}
-                  >
-                    Similarity: {Math.round(cit.similarity_score * 100)}%
-                  </div>
-                </div>
-              ))}
-            </div>
-          </article>
+          )}
 
-          {/* Side-by-side comparisons */}
-          <article className="panel">
-            <div className="sectionTitle">
-              <BookOpen size={16} />
-              <h2>Side-by-Side Comparisons</h2>
+          {/* Gap Alignment */}
+          {report.gap_alignment && (
+            <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: 16, borderRadius: 6, marginBottom: 20 }}>
+              <strong style={{ fontSize: 13, color: "#1d4ed8", display: "block", marginBottom: 4 }}>
+                Corpus Gap Alignment: Status: {report.gap_alignment.status || "Evaluated"}
+              </strong>
+              <p style={{ fontSize: 13, color: "#1e293b", margin: 0, lineHeight: 1.5 }}>
+                {report.gap_alignment.explanation}
+              </p>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {result.comparisons.map((comp) => (
-                <div
-                  key={comp.neighbour_title}
-                  style={{ padding: 16, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-                    <strong style={{ color: "#1d4ed8" }}>{comp.neighbour_title}</strong>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        background: "#eff6ff",
-                        color: "#1d4ed8",
-                        padding: "2px 8px",
-                        borderRadius: 12,
-                      }}
-                    >
-                      {Math.round(comp.similarity_score * 100)}% similar
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: 12,
-                      fontSize: 12,
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Corpus Paper</div>
-                      <div><strong>Contribution:</strong> {comp.neighbour_contribution}</div>
-                      <div style={{ marginTop: 4 }}><strong>Limitation:</strong> {comp.neighbour_limitation}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 600, color: "#475569", marginBottom: 4 }}>Your Paper</div>
-                      <div><strong>Contribution:</strong> {comp.user_contribution}</div>
-                      <div style={{ marginTop: 4 }}><strong>Limitation:</strong> {comp.user_limitation}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
+          )}
+
+          {/* Candidate Uncited Literature */}
+          {report.candidate_uncited_comparisons && report.candidate_uncited_comparisons.length > 0 && (
+            <div style={{ background: "#fffbeb", border: "1px solid #fef3c7", padding: 16, borderRadius: 6, marginBottom: 20 }}>
+              <strong style={{ fontSize: 13, color: "#92400e", display: "block", marginBottom: 8 }}>
+                Candidate Relevant Literature to Compare or Cite:
+              </strong>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 12, color: "#78350f", lineHeight: 1.6 }}>
+                {report.candidate_uncited_comparisons.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
             </div>
-          </article>
-        </div>
+          )}
+
+          {/* Suggested Improvements & Next Experiments */}
+          {report.suggested_improvements && report.suggested_improvements.length > 0 && (
+            <div>
+              <strong style={{ fontSize: 13, color: "#0f172a", display: "block", marginBottom: 8 }}>
+                Suggested Next Experiments & Benchmarks:
+              </strong>
+              <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#334155", lineHeight: 1.6 }}>
+                {report.suggested_improvements.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </article>
+      ) : (
+        <article className="panel" style={{ padding: 32, textAlign: "center", color: "#64748b" }}>
+          <FileText size={36} style={{ margin: "0 auto 12px", opacity: 0.5 }} />
+          <h3>No Manuscript Uploaded Yet</h3>
+          <p style={{ fontSize: 13 }}>
+            Upload an academic draft or PDF manuscript above to view its comparative analysis report.
+          </p>
+        </article>
       )}
     </section>
   );

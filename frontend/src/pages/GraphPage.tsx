@@ -1,33 +1,13 @@
 import ForceGraph2D from "react-force-graph-2d";
-import { Check, Filter, Focus, Pencil, Route, Search } from "lucide-react";
+import { Filter, Focus, Layers, Network, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, Edge, Paper, PaperUpdate, Workspace } from "../lib/api";
+import { api, Cluster, GraphData, GraphEdge, GraphNode, Project } from "../lib/api";
 
-type EdgeType = "citation" | "similarity" | "semantic_relation";
-type GraphNode = Paper & { name: string; x: number; y: number };
-type ExplainPathRow = {
-  from_title: string;
-  to_title: string;
-  edge_type: string;
-  label: string | null;
-  confidence: number;
-};
-
-const edgeColors: Record<EdgeType, string> = {
-  citation: "#0f766e",
-  similarity: "#6d5dfc",
-  semantic_relation: "#d97706",
-};
-
-const clusterColors = ["#2364aa", "#0f766e", "#8b5cf6", "#d97706", "#c2410c", "#64748b"];
-
-function shortenTitle(title: string, max = 26) {
-  return title.length > max ? `${title.slice(0, max - 1)}...` : title;
-}
+const clusterPalette = ["#2563eb", "#059669", "#7c3aed", "#d97706", "#db2777", "#475569"];
 
 function useElementSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
-  const [size, setSize] = useState({ width: 900, height: 640 });
+  const [size, setSize] = useState({ width: 900, height: 600 });
 
   useEffect(() => {
     if (!ref.current) return;
@@ -44,392 +24,255 @@ function useElementSize<T extends HTMLElement>() {
   return { ref, size };
 }
 
-export function GraphPage({ papers, onChanged, workspace }: { papers: Paper[]; onChanged: () => void; workspace: Workspace | null }) {
+export function GraphPage({ project }: { project: Project | null }) {
   const graphRef = useRef<any>(null);
   const { ref: canvasRef, size } = useElementSize<HTMLDivElement>();
-  const [edges, setEdges] = useState<Edge[]>([]);
-  const [selected, setSelected] = useState<Paper | null>(null);
-  const [target, setTarget] = useState("");
-  const [explanation, setExplanation] = useState("");
-  const [pathRows, setPathRows] = useState<ExplainPathRow[]>([]);
-  const [related, setRelated] = useState<Paper[]>([]);
-  const [hops, setHops] = useState(2);
-  const [mode, setMode] = useState<"bfs" | "dfs">("bfs");
-  const [query, setQuery] = useState("");
-  const [showLabels, setShowLabels] = useState(false);
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
-  const [activeTypes, setActiveTypes] = useState<Record<EdgeType, boolean>>({
-    citation: true,
-    similarity: true,
-    semantic_relation: true,
-  });
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<PaperUpdate | null>(null);
+
+  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], edges: [], total_nodes: 0, total_edges: 0 });
+  const [clusters, setClusters] = useState<Cluster[]>([]);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.graph(workspace?.id).then((data) => setEdges(data.edges));
-  }, [papers.length, workspace?.id]);
+    if (project) {
+      loadGraphAndClusters();
+    }
+  }, [project?.id]);
 
-  useEffect(() => {
-    if (!selected) return;
-    setDraft({
-      title: selected.title,
-      authors: selected.authors,
-      abstract: selected.abstract,
-      year: selected.year,
-      source_type: selected.source_type,
-    });
-  }, [selected]);
+  async function loadGraphAndClusters() {
+    if (!project) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const [gData, cData] = await Promise.all([
+        api.graph.get(project.id),
+        api.clusters.get(project.id),
+      ]);
+      setGraphData(gData);
+      setClusters(cData);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load knowledge graph.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const visiblePapers = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return papers;
-    return papers.filter((paper) =>
-      `${paper.title} ${paper.authors} ${paper.abstract}`.toLowerCase().includes(normalized),
-    );
-  }, [papers, query]);
+  // Filtered nodes and edges
+  const filteredData = useMemo(() => {
+    let nodes = graphData.nodes;
+    if (selectedClusterId !== null) {
+      nodes = nodes.filter((n) => n.cluster_id === selectedClusterId);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      nodes = nodes.filter((n) => n.title.toLowerCase().includes(q) || n.authors_str.toLowerCase().includes(q));
+    }
 
-  const visiblePaperIds = useMemo(() => new Set(visiblePapers.map((paper) => paper.id)), [visiblePapers]);
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    const edges = graphData.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
 
-  const visibleEdges = useMemo(
-    () =>
-      edges.filter(
-        (edge) =>
-          activeTypes[edge.edge_type as EdgeType] &&
-          visiblePaperIds.has(edge.source_paper_id) &&
-          visiblePaperIds.has(edge.target_paper_id),
-      ),
-    [activeTypes, edges, visiblePaperIds],
-  );
-
-  const clusterInfo = useMemo(() => {
-    const neighbors = new Map<number, Set<number>>();
-    visiblePapers.forEach((paper) => neighbors.set(paper.id, new Set()));
-    visibleEdges.forEach((edge) => {
-      neighbors.get(edge.source_paper_id)?.add(edge.target_paper_id);
-      neighbors.get(edge.target_paper_id)?.add(edge.source_paper_id);
-    });
-
-    const componentByPaper = new Map<number, number>();
-    const summaries: { id: number; color: string; paperIds: number[] }[] = [];
-    const seen = new Set<number>();
-    visiblePapers.forEach((paper) => {
-      if (seen.has(paper.id)) return;
-      const stack = [paper.id];
-      const paperIds: number[] = [];
-      seen.add(paper.id);
-      while (stack.length) {
-        const current = stack.pop()!;
-        paperIds.push(current);
-        neighbors.get(current)?.forEach((next) => {
-          if (!seen.has(next)) {
-            seen.add(next);
-            stack.push(next);
-          }
-        });
-      }
-      const id = summaries.length;
-      const color = clusterColors[id % clusterColors.length];
-      paperIds.forEach((paperId) => componentByPaper.set(paperId, id));
-      summaries.push({ id, color, paperIds });
-    });
-    return { componentByPaper, summaries };
-  }, [visibleEdges, visiblePapers]);
-
-  const data = useMemo(
-    () => ({
-      nodes: visiblePapers.map((paper) => ({ ...paper, name: paper.title })),
-      links: visibleEdges.map((edge) => ({
-        source: edge.source_paper_id,
-        target: edge.target_paper_id,
-        label: edge.relation_label ?? edge.edge_type,
-        edgeType: edge.edge_type,
-        confidence: edge.confidence,
+    return {
+      nodes: nodes.map((n) => ({ ...n, name: n.title })),
+      links: edges.map((e) => ({
+        ...e,
+        source: e.source,
+        target: e.target,
       })),
-    }),
-    [visiblePapers, visibleEdges],
-  );
+    };
+  }, [graphData, selectedClusterId, searchQuery]);
 
-  const selectedEdges = useMemo(
-    () =>
-      selected
-        ? edges.filter((edge) => edge.source_paper_id === selected.id || edge.target_paper_id === selected.id)
-        : [],
-    [edges, selected],
-  );
-
-  const connectedIds = useMemo(() => {
-    const ids = new Set<number>();
-    if (!selected) return ids;
-    ids.add(selected.id);
-    selectedEdges.forEach((edge) => {
-      ids.add(edge.source_paper_id);
-      ids.add(edge.target_paper_id);
-    });
-    return ids;
-  }, [selected, selectedEdges]);
-
-  useEffect(() => {
-    if (!graphRef.current || visiblePapers.length === 0) return;
-    const timer = window.setTimeout(() => graphRef.current?.zoomToFit(500, 80), 500);
-    return () => window.clearTimeout(timer);
-  }, [visiblePapers.length, visibleEdges.length, size.width, size.height]);
-
-  async function explain() {
-    if (!selected || !target) return;
-    const result = await api.explain(selected.id, Number(target), workspace?.id);
-    setPathRows(result.path);
-    setExplanation(result.explanation || "No directed path found between those papers.");
-  }
-
-  async function loadRelated(nextMode = mode, nextHops = hops) {
-    if (!selected) return;
-    const result = await api.related(selected.id, nextHops, nextMode, workspace?.id);
-    setRelated(result);
-  }
-
-  async function savePaper() {
-    if (!selected || !draft) return;
-    const saved = await api.updatePaper(selected.id, draft);
-    setSelected(saved);
-    setEditing(false);
-    onChanged();
-  }
-
-  function toggleEdge(type: EdgeType) {
-    setActiveTypes((value) => ({ ...value, [type]: !value[type] }));
+  if (!project) {
+    return (
+      <section className="page" style={{ maxWidth: 800, margin: "40px auto", textAlign: "center" }}>
+        <Network size={48} color="#94a3b8" style={{ margin: "0 auto 16px" }} />
+        <h2>No Active Research Project</h2>
+        <p style={{ color: "#64748b" }}>Please select a research project to inspect its knowledge graph.</p>
+      </section>
+    );
   }
 
   return (
-    <section className="graphWorkspace">
-      <header className="workspaceTopbar">
+    <section className="page graphPage" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 40px)" }}>
+      {/* Top Filter Bar */}
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h1>Research Graph</h1>
-          <p>{visiblePapers.length} papers, {visibleEdges.length} visible edges, {clusterInfo.summaries.length} clusters</p>
+          <h1 style={{ fontSize: 20, margin: "0 0 4px", color: "#0f172a" }}>
+            Knowledge Graph · "{project.topic}"
+          </h1>
+          <p style={{ fontSize: 12, color: "#64748b", margin: 0 }}>
+            {graphData.total_nodes} nodes · {graphData.total_edges} relations · Solid lines: verified citations · Dashed lines: inferred semantic similarity
+          </p>
         </div>
-        <div className="toolbar">
-          <label className="searchBox">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search papers" />
-          </label>
-          <button className="toolButton" onClick={() => graphRef.current?.zoomToFit(500, 80)} title="Fit graph">
-            <Focus size={16} />
-            <span>Fit</span>
-          </button>
-          <button className={showLabels ? "toolButton active" : "toolButton"} onClick={() => setShowLabels(!showLabels)} title="Toggle labels">
-            <Filter size={16} />
-            <span>Labels</span>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* Cluster filter */}
+          {clusters.length > 0 && (
+            <select
+              value={selectedClusterId ?? ""}
+              onChange={(e) => setSelectedClusterId(e.target.value ? Number(e.target.value) : null)}
+              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 12 }}
+            >
+              <option value="">All Thematic Clusters ({clusters.length})</option>
+              {clusters.map((c, idx) => (
+                <option key={c.id} value={c.id}>
+                  {c.label} ({c.member_count} papers)
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Search */}
+          <div style={{ position: "relative" }}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search papers in graph..."
+              style={{ padding: "6px 10px 6px 28px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 12, width: 200 }}
+            />
+            <Search size={14} color="#94a3b8" style={{ position: "absolute", left: 8, top: 9 }} />
+          </div>
+
+          <button
+            onClick={() => graphRef.current?.zoomToFit(400, 30)}
+            style={{ padding: "6px 12px", background: "#f1f5f9", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 12, cursor: "pointer" }}
+            title="Recenter Graph"
+          >
+            <Focus size={14} />
           </button>
         </div>
       </header>
 
-      <div className="graphLayout">
-        <div className="graphPanel">
-          <div className="graphControls">
-            {(Object.keys(edgeColors) as EdgeType[]).map((type) => (
-              <button
-                className={activeTypes[type] ? "edgeToggle active" : "edgeToggle"}
-                key={type}
-                onClick={() => toggleEdge(type)}
-              >
-                <i style={{ background: edgeColors[type] }} />
-                {type === "semantic_relation" ? "extends" : type}
-              </button>
-            ))}
-          </div>
-          <div className="graphCanvas" ref={canvasRef}>
-            <ForceGraph2D
-              ref={graphRef}
-              width={size.width}
-              height={size.height}
-              graphData={data}
-              backgroundColor="#ffffff"
-              cooldownTicks={180}
-              d3AlphaDecay={0.018}
-              d3VelocityDecay={0.34}
-              nodeLabel="name"
-              nodeRelSize={4}
-              linkLabel="label"
-              linkWidth={(link: any) => 0.8 + Number(link.confidence ?? 0.5)}
-              linkDirectionalArrowLength={3.4}
-              linkDirectionalArrowRelPos={1}
-              linkCurvature={0.06}
-              enableNodeDrag
-              nodeCanvasObject={(node: any, ctx, scale) => {
-                const graphNode = node as GraphNode;
-                const isSelected = selected?.id === graphNode.id;
-                const connected = connectedIds.has(graphNode.id);
-                const isHovered = hoveredId === graphNode.id;
-                const radius = isSelected ? 7.5 : connected || isHovered ? 6.2 : 4.8;
-                ctx.globalAlpha = selected && !connected ? 0.42 : 1;
-                const clusterId = clusterInfo.componentByPaper.get(graphNode.id) ?? 0;
-                const clusterColor = clusterColors[clusterId % clusterColors.length];
-                ctx.fillStyle = isSelected ? "#f97316" : connected ? "#1849a9" : clusterColor;
-                ctx.beginPath();
-                ctx.arc(graphNode.x, graphNode.y, radius, 0, 2 * Math.PI);
-                ctx.fill();
-                ctx.strokeStyle = "#ffffff";
-                ctx.lineWidth = 1.6 / scale;
-                ctx.stroke();
-                ctx.globalAlpha = 1;
+      {error && (
+        <div style={{ padding: 12, background: "#fee2e2", color: "#991b1b", borderRadius: 6, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
 
-                const shouldLabel =
-                  isSelected ||
-                  isHovered ||
-                  (showLabels && (visiblePapers.length <= 18 || connected || scale > 1.35));
-                if (!shouldLabel) return;
-                const label = shortenTitle(graphNode.name);
-                const fontSize = Math.min(6.8, Math.max(4.8, 5.8 / scale));
-                ctx.font = `600 ${fontSize}px Inter, sans-serif`;
-                const textWidth = ctx.measureText(label).width;
-                const x = graphNode.x + radius + 3.5;
-                const y = graphNode.y - fontSize / 2 - 3;
-                ctx.fillStyle = "rgba(255, 255, 255, 0.86)";
-                ctx.strokeStyle = "rgba(208, 213, 221, 0.9)";
-                ctx.lineWidth = 0.55 / scale;
-                ctx.beginPath();
-                ctx.roundRect(x - 3, y - 1.5, textWidth + 6, fontSize + 4, 3);
-                ctx.fill();
-                ctx.stroke();
-                ctx.fillStyle = "#182230";
-                ctx.fillText(label, x, y + fontSize);
-              }}
-              linkColor={(link: any) => edgeColors[link.edgeType as EdgeType] ?? "#98a2b3"}
-              onNodeHover={(node: any) => setHoveredId(node?.id ?? null)}
-              onNodeClick={(node: any) => {
-                const paper = papers.find((item) => item.id === node.id) ?? null;
-                setSelected(paper);
-                setRelated([]);
-                setExplanation("");
-                setPathRows([]);
-              }}
-            />
-          </div>
+      {/* Main Canvas + Drawer Layout */}
+      <div style={{ flex: 1, position: "relative", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden", background: "#f8fafc" }}>
+        <div ref={canvasRef} style={{ width: "100%", height: "100%" }}>
+          <ForceGraph2D
+            ref={graphRef}
+            width={size.width}
+            height={size.height}
+            graphData={filteredData}
+            nodeId="id"
+            nodeLabel={(node: any) => `${node.title}\n(${node.year || "n.d."})`}
+            nodeColor={(node: any) => {
+              if (node.cluster_id !== null && clusters.length > 0) {
+                const clusterIdx = clusters.findIndex((c) => c.id === node.cluster_id);
+                return clusterPalette[clusterIdx % clusterPalette.length] || "#2563eb";
+              }
+              return "#2563eb";
+            }}
+            nodeVal={(node: any) => Math.max(4, Math.min(14, 4 + Math.log2(node.citation_count + 1)))}
+            linkColor={(link: any) => (link.relation_type === "cites" ? "#0f766e" : "#8b5cf6")}
+            linkWidth={(link: any) => (link.relation_type === "cites" ? 2 : 1)}
+            linkLineDash={(link: any) => (link.relation_type === "cites" ? undefined : [4, 4])}
+            linkDirectionalArrowLength={(link: any) => (link.relation_type === "cites" ? 6 : 0)}
+            linkDirectionalArrowRelPos={0.8}
+            onNodeClick={(node: any) => setSelectedNode(node)}
+          />
         </div>
 
-        <aside className="inspector">
-          <div className="inspectorHeader">
-            <div>
-              <h2>{selected ? "Paper Details" : "Graph Tools"}</h2>
-              <p>{selected ? selected.title : "Search, filter, select a paper, then inspect paths and neighborhoods."}</p>
-            </div>
-            {selected && (
-              <button className="iconButton subtle" onClick={() => setEditing(!editing)} title="Edit paper">
-                <Pencil size={16} />
+        {/* Legend */}
+        <div
+          style={{
+            position: "absolute",
+            bottom: 14,
+            left: 14,
+            background: "rgba(255, 255, 255, 0.92)",
+            padding: "8px 14px",
+            borderRadius: 6,
+            border: "1px solid #cbd5e1",
+            fontSize: 11,
+            display: "flex",
+            gap: 16,
+            alignItems: "center",
+          }}
+        >
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 14, height: 2, background: "#0f766e", display: "inline-block" }} />
+            Verified Citation (Metadata)
+          </span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 14, height: 2, borderTop: "2px dashed #8b5cf6", display: "inline-block" }} />
+            Inferred Semantic Similarity
+          </span>
+        </div>
+
+        {/* Node Detail Drawer */}
+        {selectedNode && (
+          <aside
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              width: 360,
+              height: "100%",
+              background: "white",
+              borderLeft: "1px solid #e2e8f0",
+              boxShadow: "-4px 0 16px rgba(0,0,0,0.06)",
+              padding: 20,
+              overflowY: "auto",
+              zIndex: 10,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  padding: "2px 8px",
+                  borderRadius: 10,
+                  background: selectedNode.abstract_only ? "#f1f5f9" : "#dcfce7",
+                  color: selectedNode.abstract_only ? "#64748b" : "#166534",
+                }}
+              >
+                {selectedNode.abstract_only ? "Abstract-Level" : "Full-Text Indexed"}
+              </span>
+              <button
+                onClick={() => setSelectedNode(null)}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}
+              >
+                <X size={18} />
               </button>
+            </div>
+
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#0f172a", margin: "0 0 6px" }}>
+              {selectedNode.title}
+            </h3>
+
+            <div style={{ fontSize: 12, color: "#475569", marginBottom: 12 }}>
+              {selectedNode.authors_str || "Authors indexed"} · {selectedNode.year || "n.d."}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+              <div style={{ background: "#f8fafc", padding: "8px 12px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+                <span style={{ fontSize: 11, color: "#64748b" }}>Citations</span>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>{selectedNode.citation_count}</div>
+              </div>
+              <div style={{ background: "#f8fafc", padding: "8px 12px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+                <span style={{ fontSize: 11, color: "#64748b" }}>Paper ID</span>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>#{selectedNode.id}</div>
+              </div>
+            </div>
+
+            {/* Thematic Cluster */}
+            {selectedNode.cluster_id !== null && (
+              <div style={{ marginBottom: 16 }}>
+                <strong style={{ fontSize: 12, color: "#334155", display: "block", marginBottom: 4 }}>Thematic Theme:</strong>
+                <span style={{ fontSize: 12, color: "#2563eb", background: "#eff6ff", padding: "3px 8px", borderRadius: 4 }}>
+                  {clusters.find((c) => c.id === selectedNode.cluster_id)?.label || `Cluster #${selectedNode.cluster_id}`}
+                </span>
+              </div>
             )}
-          </div>
-
-          {!selected && (
-            <>
-              <div className="legend">
-                <span><i className="citation" /> citation</span>
-                <span><i className="similarity" /> similarity</span>
-                <span><i className="semantic" /> extends</span>
-              </div>
-              <div className="clusterList">
-                {clusterInfo.summaries.map((cluster) => (
-                  <button
-                    key={cluster.id}
-                    onClick={() => {
-                      const first = papers.find((paper) => paper.id === cluster.paperIds[0]);
-                      if (first) setSelected(first);
-                    }}
-                  >
-                    <i style={{ background: cluster.color }} />
-                    <span>Cluster {cluster.id + 1}</span>
-                    <strong>{cluster.paperIds.length} papers</strong>
-                  </button>
-                ))}
-              </div>
-              <div className="paperMiniList">
-                {visiblePapers.map((paper) => (
-                  <button key={paper.id} onClick={() => setSelected(paper)}>
-                    <strong>{paper.title}</strong>
-                    <span>{paper.year ?? "No year"} - {paper.source_type}</span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-
-          {selected && draft && (
-            <>
-              {editing ? (
-                <div className="editForm">
-                  <label>Title<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label>
-                  <label>Authors<input value={draft.authors} onChange={(event) => setDraft({ ...draft, authors: event.target.value })} /></label>
-                  <label>Year<input type="number" value={draft.year ?? ""} onChange={(event) => setDraft({ ...draft, year: event.target.value ? Number(event.target.value) : null })} /></label>
-                  <label>Abstract<textarea value={draft.abstract} onChange={(event) => setDraft({ ...draft, abstract: event.target.value })} /></label>
-                  <button className="primary" onClick={savePaper}><Check size={16} /> Save paper</button>
-                </div>
-              ) : (
-                <>
-                  <div className="meta">
-                    <span>{selected.year ?? "No year"}</span>
-                    <span>{selected.source_type}</span>
-                    <span>{selectedEdges.length} edges</span>
-                  </div>
-                  <p className="authors">{selected.authors}</p>
-                  <p className="abstract">{selected.abstract}</p>
-                </>
-              )}
-
-              <div className="toolSection">
-                <h3>Related Papers</h3>
-                <div className="miniControls">
-                  <select value={mode} onChange={(event) => setMode(event.target.value as "bfs" | "dfs")}>
-                    <option value="bfs">BFS by hops</option>
-                    <option value="dfs">DFS component</option>
-                  </select>
-                  <input type="number" min={1} max={5} value={hops} onChange={(event) => setHops(Number(event.target.value))} />
-                  <button className="secondary" onClick={() => loadRelated()}>Find</button>
-                </div>
-                <div className="resultList">
-                  {related.map((paper) => <button key={paper.id} onClick={() => setSelected(paper)}>{paper.title}</button>)}
-                </div>
-              </div>
-
-              <div className="toolSection">
-                <h3>Explain Connection</h3>
-                <select value={target} onChange={(event) => setTarget(event.target.value)}>
-                  <option value="">Choose target paper...</option>
-                  {papers.filter((paper) => paper.id !== selected.id).map((paper) => (
-                    <option key={paper.id} value={paper.id}>{paper.title}</option>
-                  ))}
-                </select>
-                <button className="primary" onClick={explain}><Route size={16} /> Explain path</button>
-                {pathRows.length > 0 && (
-                  <div className="pathList">
-                    {pathRows.map((row, index) => (
-                      <div key={`${row.from_title}-${row.to_title}-${index}`}>
-                        <strong>{row.label ?? row.edge_type}</strong>
-                        <span>{row.from_title} {"->"} {row.to_title}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {explanation && <div className="note">{explanation}</div>}
-              </div>
-
-              <div className="toolSection">
-                <h3>Edges</h3>
-                <div className="edgeList">
-                  {selectedEdges.map((edge) => {
-                    const otherId = edge.source_paper_id === selected.id ? edge.target_paper_id : edge.source_paper_id;
-                    const other = papers.find((paper) => paper.id === otherId);
-                    return (
-                      <button key={edge.id} onClick={() => other && setSelected(other)}>
-                        <strong>{edge.relation_label ?? edge.edge_type}</strong>
-                        <span>{other?.title ?? `Paper ${otherId}`}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
-        </aside>
+          </aside>
+        )}
       </div>
     </section>
   );

@@ -1,18 +1,56 @@
+"""
+FastAPI Application Entry Point for ResearchGraphAI.
+
+Configures:
+- Async lifespan event handler
+- Comprehensive /health check with PostgreSQL and pgvector verification
+- CORS middleware with strict origin whitelist
+- API routes mounted at /api
+- Frontend static asset serving without masking API 404s
+"""
+
+from contextlib import asynccontextmanager
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from app.api.routes import router
-from app.database import init_db
-from app.seed import seed_if_empty
+from app.database import check_db_health, get_db
+from app import schemas
 
-app = FastAPI(title="Research Graph AI")
 
-default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: test database connection and pgvector extension
+    db = next(get_db())
+    try:
+        health_status = check_db_health(db)
+        print(f"[ResearchGraphAI] Startup DB Check: {health_status}")
+    finally:
+        db.close()
+    yield
+    # Shutdown logic if needed
+
+
+app = FastAPI(
+    title="ResearchGraphAI API",
+    description="Evidence-Grounded AI Research Discovery & Knowledge Graph Platform",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# CORS Configuration
+default_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+]
 configured_origins = [
     origin.strip()
     for origin in os.getenv("CORS_ORIGINS", "").split(",")
@@ -28,19 +66,27 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
-    seed_if_empty()
-
-
-@app.get("/health")
-def health():
-    return {"ok": True}
+@app.get("/health", response_model=schemas.HealthOut)
+def health_check(db: Session = Depends(get_db)):
+    """Health check verifying database connectivity and pgvector extension presence."""
+    info = check_db_health(db)
+    if not info.get("database_connected"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connection failed: {info.get('error')}",
+        )
+    return schemas.HealthOut(
+        ok=True,
+        database_connected=info["database_connected"],
+        pgvector_installed=info.get("pgvector_installed", False),
+        pgvector_version=info.get("pgvector_version"),
+        engine=info.get("engine", "postgresql"),
+    )
 
 
 app.include_router(router, prefix="/api")
 
+# Static frontend serving
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 INDEX_PATH = FRONTEND_DIST / "index.html"
@@ -61,17 +107,16 @@ def frontend_response():
             <meta name="viewport" content="width=device-width, initial-scale=1" />
             <title>Research Graph AI</title>
             <style>
-              body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; background: #f4f6fb; color: #172033; }
-              main { max-width: 720px; background: white; border: 1px solid #dfe7f1; border-radius: 8px; padding: 28px; }
-              a { color: #2364aa; }
+              body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; background: #f8fafc; color: #0f172a; }
+              main { max-width: 720px; background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 28px; }
+              a { color: #2563eb; }
             </style>
           </head>
           <body>
             <main>
-              <h1>Research Graph AI backend is running</h1>
-              <p>The API is live, but the React frontend build was not found on this deployment.</p>
-              <p>Check the Render build command and confirm it runs <code>cd frontend && npm install && npm run build</code>.</p>
-              <p><a href="/health">Health check</a> · <a href="/api/graph">Graph API</a></p>
+              <h1>ResearchGraphAI API is live</h1>
+              <p>The backend is active on Supabase PostgreSQL with pgvector.</p>
+              <p><a href="/docs">OpenAPI Documentation</a> · <a href="/health">Health Status</a></p>
             </main>
           </body>
         </html>
@@ -86,7 +131,14 @@ def serve_root():
 
 
 @app.get("/{full_path:path}")
-def serve_frontend(full_path: str):
+def serve_frontend_catchall(full_path: str):
+    # Ensure API paths that 404 do not return the HTML frontend
+    if full_path.startswith("api/"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"API endpoint '/{full_path}' not found",
+        )
+
     requested_path = FRONTEND_DIST / full_path
     if full_path and requested_path.is_file():
         return FileResponse(requested_path)

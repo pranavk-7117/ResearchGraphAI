@@ -1,14 +1,46 @@
 services:
   - type: web
-    name: research-graph-ai
+    name: research-graph-ai-web
     runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
-    startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: cd backend && alembic upgrade head && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.7
-      - key: LLM_PROVIDER
-        value: local
+        value: 3.11.4
       - key: DATABASE_URL
-        value: sqlite:///./research_graph.db
+        sync: false # Supabase PostgreSQL connection pooler URI
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENALEX_MAILTO
+        sync: false
+
+  - type: worker
+    name: research-graph-ai-worker
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && python -m app.worker
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: DATABASE_URL
+        sync: false # Supabase PostgreSQL connection pooler URI
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENALEX_MAILTO
+        sync: false

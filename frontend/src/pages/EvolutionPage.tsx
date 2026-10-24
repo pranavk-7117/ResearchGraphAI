@@ -1,171 +1,229 @@
-import { BookOpen, Download, GitBranch, Sparkles } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { api, EvolutionResponse, TopicItem, Workspace } from "../lib/api";
+import { Bookmark, Calendar, CheckCircle2, ChevronRight, GitFork, Info, Layers, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api, EvolutionData, Project } from "../lib/api";
 
-type EvolutionData = EvolutionResponse;
+type TabView = "citation_timeline" | "method_progression" | "finding_dynamics";
 
-export function EvolutionPage({ workspace }: { workspace: Workspace | null }) {
-  const [topic, setTopic] = useState("Artificial Intelligence");
-  const [days, setDays] = useState(5);
-  const [data, setData] = useState<EvolutionData | null>(null);
-  const [availableTopics, setAvailableTopics] = useState<TopicItem[]>([]);
+export function EvolutionPage({ project }: { project: Project | null }) {
+  const [activeTab, setActiveTab] = useState<TabView>("citation_timeline");
+  const [data, setData] = useState<EvolutionData>({
+    citation_timeline: [],
+    method_progression: [],
+    finding_dynamics: [],
+  });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Fetch dynamic topics from the database
-    api.topics().then((items) => {
-      setAvailableTopics(items);
-      if (items.length > 0) {
-        setTopic(items[0].topic);
-        run(items[0].topic);
-      } else {
-        run("Artificial Intelligence");
-      }
-    }).catch(() => {
-      run("Artificial Intelligence");
-    });
-  }, []);
+    if (project) {
+      loadEvolution();
+    }
+  }, [project?.id]);
 
-  async function run(topicToRun = topic) {
+  async function loadEvolution() {
+    if (!project) return;
     setLoading(true);
+    setError(null);
     try {
-      const res = await api.evolution(topicToRun, days, workspace?.id);
+      const res = await api.evolution.get(project.id);
       setData(res);
+    } catch (err: any) {
+      setError(err?.message || "Failed to load evolution analysis.");
     } finally {
       setLoading(false);
     }
   }
 
-  const exportText = useMemo(() => {
-    if (!data) return "";
-    const timeline = data.papers.map((paper) => `${paper.year ?? "----"} - ${paper.title}: ${paper.contribution}`).join("\n");
-    const transitions = data.steps.map((step) => `${step.from} -> ${step.to}\nSolved: ${step.solved}\nLeft open: ${step.left_open}\nNext fixed: ${step.next_fixed}`).join("\n\n");
-    const plan = data.reading_plan.map((day) => `Day ${day.day}: ${day.papers.join(", ") || "Buffer day"}`).join("\n");
-    return `Evolution Chain: ${topic}\n\nTimeline\n${timeline}\n\nTransitions\n${transitions}\n\nLiterature Review\n${data.literature_review}\n\nReading Plan\n${plan}`;
-  }, [data, topic]);
-
-  function downloadReview() {
-    const blob = new Blob([exportText], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `evolution-${topic.toLowerCase().replace(/\s+/g, "-")}-review.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
+  if (!project) {
+    return (
+      <section className="page" style={{ maxWidth: 800, margin: "40px auto", textAlign: "center" }}>
+        <GitFork size={48} color="#94a3b8" style={{ margin: "0 auto 16px" }} />
+        <h2>No Active Research Project</h2>
+        <p style={{ color: "#64748b" }}>Please select a research project to view literature evolution.</p>
+      </section>
+    );
   }
 
+  const currentItems = data[activeTab] || [];
+
   return (
-    <section className="page evolutionPage">
-      <header className="pageHeader inlineHeader">
+    <section className="page evolutionPage" style={{ maxWidth: 1050, margin: "0 auto", paddingBottom: 60 }}>
+      <header className="pageHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h1>Evolution Chain</h1>
-          <p>Trace how research in a domain moves from early foundations to modern extensions, open gaps, and reading plans.</p>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#2563eb", textTransform: "uppercase" }}>
+            Scientific Trajectory
+          </span>
+          <h1>Literature Evolution: "{project.topic}"</h1>
+          <p>
+            Traces chronological succession, empirical method progressions, and verified citation lineages across this corpus.
+          </p>
         </div>
-        <div className="controls">
-          <input
-            value={topic}
-            onChange={(event) => setTopic(event.target.value)}
-            onKeyDown={(event) => event.key === "Enter" && run()}
-            placeholder="Search domain or topic..."
-          />
-          <input type="number" min={1} max={30} value={days} onChange={(event) => setDays(Number(event.target.value))} />
-          <button className="primary" onClick={() => run()} disabled={loading}>
-            {loading ? "Analyzing..." : "Run"}
-          </button>
-          <button className="secondary" onClick={downloadReview} disabled={!data}><Download size={16} /> Export</button>
-        </div>
+        <button
+          onClick={loadEvolution}
+          disabled={loading}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "8px 14px",
+            background: "#f1f5f9",
+            border: "1px solid #cbd5e1",
+            borderRadius: 6,
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          <RefreshCw size={14} /> Refresh Analysis
+        </button>
       </header>
 
-      {/* Dynamic Topic Pills */}
-      <div className="topicPresetBar" style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "14px 0" }}>
-        {availableTopics.slice(0, 10).map((item) => (
-          <button
-            className={topic.toLowerCase() === item.topic.toLowerCase() ? "active" : ""}
-            key={item.topic}
-            onClick={() => {
-              setTopic(item.topic);
-              run(item.topic);
-            }}
-            style={{ fontSize: 12, padding: "5px 12px", borderRadius: 16 }}
-          >
-            {item.topic} <span style={{ opacity: 0.6, fontSize: 10 }}>({item.count})</span>
-          </button>
-        ))}
+      {/* View Switcher Tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, borderBottom: "1px solid #e2e8f0", paddingBottom: 12 }}>
+        <button
+          onClick={() => setActiveTab("citation_timeline")}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 6,
+            border: "none",
+            fontSize: 13,
+            fontWeight: activeTab === "citation_timeline" ? 600 : 400,
+            background: activeTab === "citation_timeline" ? "#2563eb" : "#f1f5f9",
+            color: activeTab === "citation_timeline" ? "white" : "#475569",
+            cursor: "pointer",
+          }}
+        >
+          1. Verified Citation Timeline ({data.citation_timeline.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab("method_progression")}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 6,
+            border: "none",
+            fontSize: 13,
+            fontWeight: activeTab === "method_progression" ? 600 : 400,
+            background: activeTab === "method_progression" ? "#2563eb" : "#f1f5f9",
+            color: activeTab === "method_progression" ? "white" : "#475569",
+            cursor: "pointer",
+          }}
+        >
+          2. Method & Metric Progression ({data.method_progression.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab("finding_dynamics")}
+          style={{
+            padding: "8px 16px",
+            borderRadius: 6,
+            border: "none",
+            fontSize: 13,
+            fontWeight: activeTab === "finding_dynamics" ? 600 : 400,
+            background: activeTab === "finding_dynamics" ? "#2563eb" : "#f1f5f9",
+            color: activeTab === "finding_dynamics" ? "white" : "#475569",
+            cursor: "pointer",
+          }}
+        >
+          3. Finding Dynamics & Consensus ({data.finding_dynamics.length})
+        </button>
       </div>
 
-      {data && (
-        <div className="evolutionGrid">
-          <article className="panel">
-            <div className="sectionTitle">
-              <Sparkles size={18} />
-              <h2>Literature Review</h2>
-            </div>
-            <p className="lead">{data.literature_review}</p>
-          </article>
+      {error && (
+        <div style={{ padding: 16, background: "#fee2e2", color: "#991b1b", borderRadius: 8, marginBottom: 20 }}>
+          {error}
+        </div>
+      )}
 
-          <article className="panel">
-            <div className="sectionTitle">
-              <BookOpen size={18} />
-              <h2>Reading Plan ({days} Days)</h2>
-            </div>
-            <div className="readingPlan">
-              {data.reading_plan.map((day) => (
-                <div key={day.day} className="planDay">
-                  <strong>Day {day.day}</strong>
-                  <ul>
-                    {day.papers.length ? day.papers.map((title) => <li key={title}>{title}</li>) : <li>Synthesis and notes buffer</li>}
-                  </ul>
+      {loading ? (
+        <p style={{ color: "#64748b" }}>Analyzing evolution chain from corpus facts...</p>
+      ) : currentItems.length === 0 ? (
+        <article className="panel" style={{ padding: 32, textAlign: "center", color: "#64748b" }}>
+          <Info size={32} style={{ margin: "0 auto 8px", opacity: 0.5 }} />
+          <h3>No Transitions Identified in this View</h3>
+          <p style={{ fontSize: 13 }}>
+            {activeTab === "citation_timeline"
+              ? "No verified citation edges exist between the papers currently processed in this project. Papers may be independently published."
+              : "Insufficient extracted fact signals to establish chronological progression. Ensure candidate papers are selected and processed."}
+          </p>
+        </article>
+      ) : (
+        <div style={{ position: "relative", paddingLeft: 24, borderLeft: "2px solid #cbd5e1", display: "flex", flexDirection: "column", gap: 24 }}>
+          {currentItems.map((item, idx) => (
+            <article
+              key={idx}
+              className="panel"
+              style={{
+                position: "relative",
+                padding: 20,
+                border: "1px solid #e2e8f0",
+                background: "white",
+              }}
+            >
+              {/* Dot on the timeline rail */}
+              <div
+                style={{
+                  position: "absolute",
+                  left: -31,
+                  top: 24,
+                  width: 12,
+                  height: 12,
+                  borderRadius: "50%",
+                  background: item.basis === "citation_metadata" ? "#0f766e" : "#2563eb",
+                  border: "2px solid white",
+                  boxShadow: "0 0 0 2px #cbd5e1",
+                }}
+              />
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: 10,
+                      background: item.basis === "citation_metadata" ? "#ccfbf1" : "#dbeafe",
+                      color: item.basis === "citation_metadata" ? "#0f766e" : "#1d4ed8",
+                    }}
+                  >
+                    Basis: {item.basis}
+                  </span>
+                  <span style={{ fontSize: 11, color: "#64748b" }}>
+                    Kind: {item.kind}
+                  </span>
                 </div>
-              ))}
-            </div>
-          </article>
+              </div>
 
-          <article className="panel fullWidth">
-            <div className="sectionTitle">
-              <GitBranch size={18} />
-              <h2>Methodology Transitions & Progression</h2>
-            </div>
-            <div className="stepList">
-              {data.steps.length ? (
-                data.steps.map((step, index) => (
-                  <div key={index} className="stepCard">
-                    <div className="stepHeader">
-                      <span className="stepNode">{step.from}</span>
-                      <span className="stepArrow">&rarr;</span>
-                      <span className="stepNode">{step.to}</span>
-                    </div>
-                    <div className="stepDetails">
-                      <p><strong>Solved:</strong> {step.solved}</p>
-                      <p><strong>Left open:</strong> {step.left_open}</p>
-                      <p><strong>Next fixed:</strong> {step.next_fixed}</p>
-                    </div>
-                    <p className="stepNote">{step.note}</p>
-                  </div>
-                ))
-              ) : (
-                <p>No direct extension edges found for this subset. Showing standalone chronological papers below.</p>
-              )}
-            </div>
-          </article>
-
-          <article className="panel fullWidth">
-            <div className="sectionTitle">
-              <BookOpen size={18} />
-              <h2>Topic Papers ({data.papers.length})</h2>
-            </div>
-            <div className="paperList">
-              {data.papers.map((paper) => (
-                <div key={paper.id} className="paperItem">
-                  <div className="paperItemHeader">
-                    <strong>{paper.title}</strong>
-                    <span>{paper.year ?? "N/A"}</span>
-                  </div>
-                  <p className="authors">{paper.authors}</p>
-                  <p className="contribution"><strong>Contribution:</strong> {paper.contribution}</p>
+              {/* Transition Header */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  background: "#f8fafc",
+                  padding: "10px 14px",
+                  borderRadius: 6,
+                  marginBottom: 12,
+                  fontSize: 13,
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <strong style={{ color: "#0f172a" }}>{item.from_paper.title}</strong>
+                  <span style={{ color: "#64748b", marginLeft: 6 }}>({item.from_paper.year || "n.d."})</span>
                 </div>
-              ))}
-            </div>
-          </article>
+                <ChevronRight size={18} color="#94a3b8" />
+                <div style={{ flex: 1 }}>
+                  <strong style={{ color: "#0f172a" }}>{item.to_paper.title}</strong>
+                  <span style={{ color: "#64748b", marginLeft: 6 }}>({item.to_paper.year || "n.d."})</span>
+                </div>
+              </div>
+
+              {/* Grounded Explanation */}
+              <p style={{ fontSize: 13, color: "#334155", lineHeight: 1.6, margin: 0 }}>
+                {item.explanation}
+              </p>
+            </article>
+          ))}
         </div>
       )}
     </section>

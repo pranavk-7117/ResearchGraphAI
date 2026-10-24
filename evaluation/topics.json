@@ -1,0 +1,17 @@
+[
+  {
+    "id": "eval-1",
+    "topic": "perovskite solar cell degradation mechanisms",
+    "domain": "Materials Science & Energy"
+  },
+  {
+    "id": "eval-2",
+    "topic": "retrieval augmented generation attribution benchmarks",
+    "domain": "Computer Science & NLP"
+  },
+  {
+    "id": "eval-3",
+    "topic": "crispr cas9 off target cleavage detection",
+    "domain": "Biomedical & Genetics"
+  }
+]

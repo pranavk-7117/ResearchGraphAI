@@ -1,50 +1,68 @@
 import {
   BookOpen,
+  Compass,
+  FileText,
   GitFork,
   GitMerge,
+  Layers,
   MessageSquareText,
   Network,
   Sparkles,
-  Upload,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { api, Project } from "./lib/api";
 import { ChatPage } from "./pages/ChatPage";
 import { ComparePage } from "./pages/ComparePage";
+import { DashboardPage } from "./pages/DashboardPage";
+import { DiscoverPage } from "./pages/DiscoverPage";
 import { EvolutionPage } from "./pages/EvolutionPage";
 import { GapsPage } from "./pages/GapsPage";
 import { GraphPage } from "./pages/GraphPage";
-import { UploadPage } from "./pages/UploadPage";
-import { WorkspacePage } from "./pages/WorkspacePage";
-import { api, Paper, Workspace } from "./lib/api";
+import { ReviewPage } from "./pages/ReviewPage";
 
-type Page = "workspaces" | "upload" | "graph" | "gaps" | "evolution" | "chat" | "compare";
+type Page =
+  | "dashboard"
+  | "discover"
+  | "graph"
+  | "evolution"
+  | "gaps"
+  | "review"
+  | "chat"
+  | "compare";
 
 const nav = [
-  { id: "workspaces", label: "Workspaces", icon: BookOpen },
-  { id: "upload", label: "Upload", icon: Upload },
-  { id: "graph", label: "Graph", icon: Network },
-  { id: "gaps", label: "Gaps", icon: Sparkles },
+  { id: "dashboard", label: "Projects", icon: BookOpen },
+  { id: "discover", label: "Discover", icon: Compass },
+  { id: "graph", label: "Knowledge Graph", icon: Network },
   { id: "evolution", label: "Evolution", icon: GitFork },
-  { id: "chat", label: "Chat", icon: MessageSquareText },
-  { id: "compare", label: "Compare", icon: GitMerge },
+  { id: "gaps", label: "Research Gaps", icon: Sparkles },
+  { id: "review", label: "Literature Review", icon: FileText },
+  { id: "chat", label: "RAG Chat", icon: MessageSquareText },
+  { id: "compare", label: "Upload & Compare", icon: GitMerge },
 ] as const;
 
 export function App() {
-  const [page, setPage] = useState<Page>("workspaces");
-  const [papers, setPapers] = useState<Paper[]>([]);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [selectedWorkspace, setSelectedWorkspace] = useState<Workspace | null>(null);
+  const [page, setPage] = useState<Page>("dashboard");
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
 
   useEffect(() => {
-    if (selectedWorkspace) {
-      api.papers(selectedWorkspace.id).then(setPapers).catch(() => setPapers([]));
-    } else {
-      api.papers().then(setPapers).catch(() => setPapers([]));
-    }
-  }, [refreshKey, selectedWorkspace?.id]);
+    // Attempt to restore active project from projects list
+    api.projects
+      .list()
+      .then((projects) => {
+        if (projects.length > 0 && !activeProject) {
+          setActiveProject(projects[0]);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
-  function handleWorkspaceReady() {
-    setRefreshKey((v) => v + 1);
+  function handleSelectProject(proj: Project) {
+    setActiveProject(proj);
+    setPage("discover");
+  }
+
+  function handleProcessingComplete() {
     setPage("graph");
   }
 
@@ -54,19 +72,19 @@ export function App() {
         <div className="brand">
           <BookOpen size={24} />
           <div>
-            <strong>Research Graph AI</strong>
+            <strong>ResearchGraphAI</strong>
             <span>
-              {selectedWorkspace
-                ? `${selectedWorkspace.topic.slice(0, 22)}… · ${papers.length} papers`
-                : `${papers.length} papers indexed`}
+              {activeProject
+                ? `${activeProject.topic.slice(0, 18)}... (${activeProject.paper_count} papers)`
+                : "Scholarly Intelligence"}
             </span>
           </div>
         </div>
 
-        {selectedWorkspace && (
+        {activeProject && (
           <div
             style={{
-              padding: "6px 14px",
+              padding: "8px 14px",
               background: "#eff6ff",
               borderBottom: "1px solid #bfdbfe",
               fontSize: 12,
@@ -76,15 +94,33 @@ export function App() {
               justifyContent: "space-between",
             }}
           >
-            <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}>
-              {selectedWorkspace.topic}
+            <span
+              style={{
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: 160,
+              }}
+              title={activeProject.topic}
+            >
+              {activeProject.topic}
             </span>
             <button
-              onClick={() => { setSelectedWorkspace(null); setRefreshKey((v) => v + 1); }}
-              style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", fontSize: 11 }}
-              title="Clear workspace filter"
+              onClick={() => {
+                setActiveProject(null);
+                setPage("dashboard");
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#6b7280",
+                cursor: "pointer",
+                fontSize: 11,
+              }}
+              title="Switch project"
             >
-              × All
+              Switch
             </button>
           </div>
         )}
@@ -107,28 +143,25 @@ export function App() {
         </nav>
       </aside>
 
-      <main className="main">
-        {page === "workspaces" && (
-          <WorkspacePage
-            selectedWorkspace={selectedWorkspace}
-            onSelectWorkspace={setSelectedWorkspace}
-            onWorkspaceReady={handleWorkspaceReady}
+      <main className="content">
+        {page === "dashboard" && (
+          <DashboardPage
+            activeProject={activeProject}
+            onSelectProject={handleSelectProject}
           />
         )}
-        {page === "upload" && (
-          <UploadPage onUploaded={() => setRefreshKey((v) => v + 1)} workspace={selectedWorkspace} />
-        )}
-        {page === "graph" && (
-          <GraphPage
-            papers={papers}
-            onChanged={() => setRefreshKey((v) => v + 1)}
-            workspace={selectedWorkspace}
+        {page === "discover" && (
+          <DiscoverPage
+            project={activeProject}
+            onProcessingComplete={handleProcessingComplete}
           />
         )}
-        {page === "gaps" && <GapsPage workspace={selectedWorkspace} />}
-        {page === "evolution" && <EvolutionPage workspace={selectedWorkspace} />}
-        {page === "chat" && <ChatPage workspace={selectedWorkspace} />}
-        {page === "compare" && <ComparePage workspace={selectedWorkspace} />}
+        {page === "graph" && <GraphPage project={activeProject} />}
+        {page === "evolution" && <EvolutionPage project={activeProject} />}
+        {page === "gaps" && <GapsPage project={activeProject} />}
+        {page === "review" && <ReviewPage project={activeProject} />}
+        {page === "chat" && <ChatPage project={activeProject} />}
+        {page === "compare" && <ComparePage project={activeProject} />}
       </main>
     </div>
   );

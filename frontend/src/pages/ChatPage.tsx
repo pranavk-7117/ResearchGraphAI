@@ -1,36 +1,52 @@
 import { Download, MessageSquareText, Search, Send, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, TopicItem, Workspace } from "../lib/api";
+import { api, ChatCitation, Project } from "../lib/api";
 
-type Message = { role: "user" | "assistant"; text: string; citations?: string[] };
+type Message = {
+  role: "user" | "assistant";
+  text: string;
+  citations?: ChatCitation[];
+};
 
-export function ChatPage({ workspace }: { workspace: Workspace | null }) {
+export function ChatPage({ project }: { project: Project | null }) {
   const [question, setQuestion] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
-  const [topics, setTopics] = useState<TopicItem[]>([]);
+  const [sessionId, setSessionId] = useState<string | undefined>();
+  const [selectedCitation, setSelectedCitation] = useState<ChatCitation | null>(null);
 
-  useEffect(() => {
-    api.topics().then(setTopics).catch(() => {});
-  }, []);
-
-  const dynamicSuggestions = [
-    "How does hierarchical planning coordinate autonomous multi-agent systems in AI?",
-    "What are the challenges of federated learning under client drift in ML?",
-    "How does zero-trust device identity secure smart city IoT grids?",
-    "How does strict attribution mitigate hallucination in scientific RAG?",
-    "What are the limitations of zero-knowledge proofs in cloud SQL databases?",
-  ];
+  const dynamicSuggestions = project
+    ? [
+        `What are the primary methodologies evaluated in "${project.topic}"?`,
+        `What empirical datasets and benchmarks are used in this corpus?`,
+        `What common hardware, algorithmic, or practical limitations are reported?`,
+        `How do recent papers improve accuracy, efficiency, or robustness?`,
+      ]
+    : [];
 
   async function ask(next = question) {
-    if (!next.trim()) return;
+    if (!project || !next.trim() || busy) return;
     const nextQuestion = next.trim();
-    setMessages((value) => [...value, { role: "user", text: nextQuestion }]);
+    setMessages((prev) => [...prev, { role: "user", text: nextQuestion }]);
     setQuestion("");
     setBusy(true);
+
     try {
-      const result = await api.chat(nextQuestion, workspace?.id);
-      setMessages((value) => [...value, { role: "assistant", text: result.answer, citations: result.citations }]);
+      const res = await api.chat.send(project.id, nextQuestion, sessionId);
+      setSessionId(res.session_id);
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: res.answer, citations: res.citations },
+      ]);
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `### Evidence\nUnable to retrieve grounded answer: ${err?.message || "Internal error"}.`,
+          citations: [],
+        },
+      ]);
     } finally {
       setBusy(false);
     }
@@ -38,111 +54,211 @@ export function ChatPage({ workspace }: { workspace: Workspace | null }) {
 
   function exportChat() {
     const transcript = messages
-      .map((message) => `${message.role.toUpperCase()}: ${message.text}${message.citations ? `\nCited: ${message.citations.join(", ")}` : ""}`)
-      .join("\n\n");
+      .map(
+        (m) =>
+          `${m.role.toUpperCase()}:\n${m.text}\n` +
+          (m.citations && m.citations.length > 0
+            ? `Citations: ${m.citations.map((c) => `${c.title} (Page ${c.page || 1})`).join("; ")}\n`
+            : "")
+      )
+      .join("\n---\n\n");
     const blob = new Blob([transcript], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "research-rag-chat.txt";
+    link.download = `rag-chat-${project?.topic.slice(0, 15).replace(/\W+/g, "_")}.txt`;
     link.click();
     URL.revokeObjectURL(url);
   }
 
-  const latestCitations = [...messages].reverse().find((message) => message.citations)?.citations ?? [];
+  if (!project) {
+    return (
+      <section className="page" style={{ maxWidth: 800, margin: "40px auto", textAlign: "center" }}>
+        <MessageSquareText size={48} color="#94a3b8" style={{ margin: "0 auto 16px" }} />
+        <h2>No Active Research Project</h2>
+        <p style={{ color: "#64748b" }}>Please select a research project to chat with its literature corpus.</p>
+      </section>
+    );
+  }
 
   return (
-    <section className="page chatPage">
-      <header className="pageHeader inlineHeader">
+    <section className="page chatPage" style={{ maxWidth: 1150, margin: "0 auto", paddingBottom: 40 }}>
+      <header className="pageHeader inlineHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h1>RAG Chat</h1>
-          <p>Ask strictly grounded research questions across AI, ML, IoT, NLP, and Cybersecurity. Zero hallucination guaranteed.</p>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#2563eb", textTransform: "uppercase" }}>
+            Attributed RAG Chat
+          </span>
+          <h1 style={{ margin: "4px 0" }}>Scholarly Q&A: "{project.topic}"</h1>
+          <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
+            Hybrid pgvector + SQL text search with Reciprocal Rank Fusion. Every claim is attributed to stored passage excerpts.
+          </p>
         </div>
-        <button className="secondary" onClick={exportChat} disabled={messages.length === 0}><Download size={16} /> Export</button>
+        <button
+          className="secondary"
+          onClick={exportChat}
+          disabled={messages.length === 0}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 6, border: "1px solid #cbd5e1" }}
+        >
+          <Download size={14} /> Export Transcript
+        </button>
       </header>
 
-      <div className="chatLayout">
+      <div className="chatLayout" style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 20, marginTop: 16 }}>
+        {/* Left Sidebar */}
         <aside className="chatSidebar">
-          <div className="retrievalCard">
-            <Search size={18} />
-            <div>
-              <strong>Grounded Retrieval Mode</strong>
-              <span>FAISS dense vectors + SQL text search</span>
+          <div className="retrievalCard" style={{ background: "#f8fafc", padding: 14, borderRadius: 6, border: "1px solid #e2e8f0", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#2563eb", marginBottom: 4 }}>
+              <Search size={16} />
+              <strong style={{ fontSize: 13 }}>Hybrid Retrieval Active</strong>
+            </div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>
+              pgvector dense cosine + full-text SQL matching with RRF reranking
             </div>
           </div>
 
-          <h2>Try asking</h2>
-          <div className="promptList">
-            {dynamicSuggestions.map((item) => (
-              <button key={item} onClick={() => ask(item)} style={{ textAlign: "left", fontSize: 12 }}>
+          <h3 style={{ fontSize: 13, color: "#475569", marginBottom: 8 }}>Suggested Inquiries</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+            {dynamicSuggestions.map((item, idx) => (
+              <button
+                key={idx}
+                onClick={() => ask(item)}
+                disabled={busy}
+                style={{
+                  textAlign: "left",
+                  fontSize: 12,
+                  padding: "8px 10px",
+                  background: "#f1f5f9",
+                  border: "1px solid #e2e8f0",
+                  borderRadius: 6,
+                  color: "#1e293b",
+                  cursor: "pointer",
+                }}
+              >
                 {item}
               </button>
             ))}
           </div>
 
-          {topics.length > 0 && (
-            <>
-              <h2 style={{ marginTop: 18 }}>Indexed Domains</h2>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 16 }}>
-                {topics.slice(0, 8).map((t) => (
-                  <span
-                    key={t.topic}
-                    onClick={() => ask(`What research is conducted on ${t.topic}?`)}
-                    style={{
-                      background: "#e2e8f0",
-                      padding: "3px 8px",
-                      borderRadius: 12,
-                      fontSize: 11,
-                      cursor: "pointer",
-                      color: "#334155",
-                    }}
-                    title={`Ask about ${t.topic}`}
-                  >
-                    {t.topic}
-                  </span>
-                ))}
+          {/* Citation Passage Drawer when clicked */}
+          {selectedCitation && (
+            <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: 14, borderRadius: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                <strong style={{ fontSize: 12, color: "#1d4ed8" }}>Source Passage {selectedCitation.ref}</strong>
+                <button
+                  onClick={() => setSelectedCitation(null)}
+                  style={{ background: "none", border: "none", fontSize: 12, color: "#64748b", cursor: "pointer" }}
+                >
+                  ×
+                </button>
               </div>
-            </>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a", marginBottom: 4 }}>
+                {selectedCitation.title}
+              </div>
+              <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>
+                Page {selectedCitation.page || 1} · Section: {selectedCitation.section || "Body"}
+              </div>
+              <p style={{ fontSize: 12, fontStyle: "italic", color: "#334155", margin: 0, lineHeight: 1.5, background: "white", padding: 8, borderRadius: 4 }}>
+                "{selectedCitation.quote}"
+              </p>
+            </div>
           )}
-
-          <h2>Latest citations</h2>
-          <div className="citationList">
-            {latestCitations.length ? latestCitations.map((citation) => <span key={citation}>{citation}</span>) : <p>No answer yet.</p>}
-          </div>
         </aside>
 
-        <main className="chatPanel">
-          <div className="chatLog">
-            {messages.length === 0 && (
-              <article className="emptyChat">
-                <MessageSquareText size={28} />
-                <strong>Ask a question about the indexed research corpus</strong>
-                <p>
+        {/* Main Chat Panel */}
+        <main className="chatPanel" style={{ display: "flex", flexDirection: "column", height: 560, background: "white", border: "1px solid #e2e8f0", borderRadius: 8, overflow: "hidden" }}>
+          <div className="chatLog" style={{ flex: 1, padding: 20, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+            {messages.length === 0 ? (
+              <article style={{ textAlign: "center", color: "#64748b", margin: "auto" }}>
+                <MessageSquareText size={36} style={{ margin: "0 auto 12px", opacity: 0.5 }} />
+                <h3 style={{ fontSize: 16, color: "#0f172a", margin: "0 0 6px" }}>Ask about the indexed research corpus</h3>
+                <p style={{ fontSize: 13, maxWidth: 440, margin: "0 auto" }}>
                   Answers are synthesized strictly from retrieved paper passages and cited inline.
-                  If evidence does not exist in the collection, the assistant will disclose the limitation rather than hallucinating.
+                  If evidence does not exist in the collection, the assistant will disclose the limitation.
                 </p>
               </article>
+            ) : (
+              messages.map((m, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                    maxWidth: m.role === "user" ? "75%" : "88%",
+                    padding: "12px 16px",
+                    borderRadius: 8,
+                    background: m.role === "user" ? "#2563eb" : "#f8fafc",
+                    color: m.role === "user" ? "white" : "#0f172a",
+                    border: m.role === "user" ? "none" : "1px solid #e2e8f0",
+                    fontSize: 13,
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <div style={{ whiteSpace: "pre-line" }}>{m.text}</div>
+
+                  {/* Clickable Citations Footer */}
+                  {m.citations && m.citations.length > 0 && (
+                    <div style={{ marginTop: 12, paddingTop: 8, borderTop: "1px solid #e2e8f0", fontSize: 11 }}>
+                      <strong style={{ color: "#475569", display: "block", marginBottom: 4 }}>Passage Citations:</strong>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {m.citations.map((c, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setSelectedCitation(c)}
+                            style={{
+                              background: "#eff6ff",
+                              border: "1px solid #bfdbfe",
+                              padding: "2px 8px",
+                              borderRadius: 4,
+                              color: "#1d4ed8",
+                              fontSize: 11,
+                              cursor: "pointer",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 4,
+                            }}
+                          >
+                            <span>{c.ref}</span> {c.title.slice(0, 24)}... (p. {c.page || 1})
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))
             )}
-            {messages.map((message, index) => (
-              <article className={`bubble ${message.role}`} key={index}>
-                <p style={{ whiteSpace: "pre-line" }}>{message.text}</p>
-                {message.citations && message.citations.length > 0 && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "#475569", borderTop: "1px solid rgba(0,0,0,0.06)", paddingTop: 4 }}>
-                    <strong>Cited Sources:</strong> {message.citations.join(" · ")}
-                  </div>
-                )}
-              </article>
-            ))}
+            {busy && (
+              <div style={{ alignSelf: "flex-start", padding: "10px 14px", background: "#f1f5f9", borderRadius: 8, fontSize: 12, color: "#64748b" }}>
+                Retrieving passage evidence and synthesizing attributed answer...
+              </div>
+            )}
           </div>
-          <div className="composer">
+
+          {/* Composer */}
+          <div style={{ padding: 12, borderTop: "1px solid #e2e8f0", display: "flex", gap: 8, background: "#f8fafc" }}>
             <input
+              type="text"
               value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={(event) => event.key === "Enter" && ask()}
-              placeholder="Ask about AI agents, ML quantization, IoT routing, RAG attribution, zero-trust..."
+              onChange={(e) => setQuestion(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && ask()}
+              placeholder="Ask an evidence-grounded question across indexed literature..."
+              style={{ flex: 1, padding: "10px 14px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 13 }}
+              disabled={busy}
             />
-            <button className="iconButton" onClick={() => ask()} disabled={busy} title="Send">
-              <Send size={18} />
+            <button
+              onClick={() => ask()}
+              disabled={busy || !question.trim()}
+              style={{
+                padding: "10px 18px",
+                background: "#2563eb",
+                color: "white",
+                border: "none",
+                borderRadius: 6,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Send size={16} />
             </button>
           </div>
         </main>

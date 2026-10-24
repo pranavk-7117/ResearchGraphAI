@@ -1,137 +1,159 @@
-# Research Graph AI 📚🔬
+# ResearchGraphAI
 
-A full-stack scientific research paper management and intelligence system combining a **relational database catalog**, an **in-memory knowledge graph engine**, **PDF ingestion with automatic Downloads storage**, **FAISS vector search**, and a **grounded zero-hallucination RAG assistant**.
+> Evidence-Grounded AI Research Discovery & Scholarly Knowledge Graph Platform
 
----
+ResearchGraphAI is a production-quality research intelligence platform that guides students and researchers from an inquiry topic to a rigorous, source-attributed understanding of a scientific field.
 
-## 🌟 Key Features
-
-1. **Relational Database Catalog & DBMS Inspector**:
-   - Supports both **Local SQLite** (zero configuration) and **PostgreSQL / Supabase** (cloud DBMS with pooling and pre-ping).
-   - Fully normalized 3NF relational schema: `papers`, `keywords`, `paper_keywords` (M:N associative table), `edges`, `paper_chunks`, and `chat_history`.
-   - **Interactive In-App SQL Console**: Run live `SELECT`, `JOIN`, and aggregation queries directly from the frontend with sub-millisecond execution reporting.
-2. **Grounded Anti-Hallucination RAG Engine**:
-   - Combines FAISS dense vector search over paper passages with SQL lexical matching.
-   - Enforces strict factual context bounding: answers are synthesized strictly from retrieved paper chunks and cited with `[Paper Title]`.
-   - Provider flexibility: Supports **OpenAI**, **Google Gemini**, **Groq**, or **Smart Local Dynamic Extraction** (no external API key required).
-3. **Automatic Research Paper Storage in Downloads**:
-   - Every PDF uploaded via the Upload portal is automatically ingested and preserved in the user's local `Downloads` folder (`C:\Users\<User>\Downloads`).
-4. **Interactive Knowledge Graph & Lineage Engine**:
-   - Directed force-directed graph powered by BFS, DFS, and unweighted shortest-path pathfinding.
-   - Topological sorting of paper extension lineages with cycle detection and cycle breaking.
-   - Research gap analysis with connected component clustering and missing citation discovery.
+Unlike generic chatbot summarizers or synthetic demonstration apps, **ResearchGraphAI operates with strictly zero fabricated content, zero hardcoded domain templates, and zero synthetic paper seeding**. Every claim, gap statement, evolution transition, and chat response traces directly to verified academic citations and stored full-text passages.
 
 ---
 
-## 🏗️ Architecture & DBMS Schema
+## 1. Core Workflow & Capabilities
 
-```
-┌────────────────────────────────────────────────────────┐
-│                        React UI                        │
-│  (Upload | Graph | Gaps | Evolution | Chat | Database) │
-└───────────────────────────┬────────────────────────────┘
-                            │ REST API
-┌───────────────────────────▼────────────────────────────┐
-│                    FastAPI Backend                     │
-├────────────────────────────────────────────────────────┤
-│ • Features & Graph Engine (BFS/DFS, Dijkstra/Shortest) │
-│ • Vector Store (FAISS IndexFlatIP + Cosine Similarity) │
-│ • Grounded RAG Synthesizer (OpenAI / Gemini / Local)   │
-│ • PDF Parser & Downloads Storage (PyMuPDF + Fitz)      │
-└───────────────────────────┬────────────────────────────┘
-                            │ SQLAlchemy 2.0
-┌───────────────────────────▼────────────────────────────┐
-│        Relational Database (SQLite / Supabase)         │
-├────────────────────────────────────────────────────────┤
-│ • papers (id, title, authors, abstract, year, text)    │
-│ • keywords (id, text)                                  │
-│ • paper_keywords (paper_id, keyword_id) [M:N Join]     │
-│ • edges (source_id, target_id, edge_type, confidence)  │
-│ • paper_chunks (paper_id, chunk_index, text, embedding)│
-│ • chat_history (question, answer, cited_paper_ids)     │
-└────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    A[Topic Inquiry] --> B[Multi-Source Discovery<br/>OpenAlex, S2, arXiv]
+    B --> C[Ranked Candidates<br/>Vector Sim + Recency + Citations]
+    C --> D[User Selection]
+    D --> E[Durable Background Worker<br/>PDF Ingest + PyMuPDF Page Extraction]
+    E --> F[Idempotent pgvector Chunking<br/>all-MiniLM-L6-v2]
+    F --> G[Knowledge Graph<br/>Citation vs Inferred Edges]
+    G --> H[Thematic Clusters<br/>Agglomerative Clustering]
+    H --> I[Evolution Chain & Literature Review]
+    I --> J[Evidence-Grounded Gaps Engine]
+    J --> K[Attributed RAG Chat & Manuscript Assessment]
 ```
 
+1. **Academic Paper Discovery (Decoupled from Ingestion)**: Queries OpenAlex, Semantic Scholar, and arXiv in parallel. Ranks candidates using multi-factor normalized scoring (dense vector similarity, recency decay, log-scaled citations, open-access status) with transparent "Why Ranked" breakdowns.
+2. **Durable Processing Pipeline**: Asynchronous background jobs backed by PostgreSQL (`SELECT ... FOR UPDATE SKIP LOCKED`). Downloads legal open-access PDFs, extracts page-by-page text with PyMuPDF, detects sections, and flags OCR-needed/image-only scans explicitly.
+3. **Idempotent pgvector Embeddings**: Dense 384-dimensional vector embeddings (`all-MiniLM-L6-v2` or OpenAI) indexed via HNSW cosine ops with unique text hash constraints.
+4. **Knowledge Graph with Distinct Edge Types**: Visually and semantically distinguishes verified citation linkages (`basis: citation_metadata`) from inferred semantic similarities (`basis: embedding_similarity`).
+5. **Algorithmic Thematic Clustering**: Agglomerative clustering over document vectors with LLM-synthesized cluster labels grounded in member evidence.
+6. **Tri-Perspective Evolution Engine**:
+   - *Verified Citation Timeline*: Grounded along recorded citation lineages.
+   - *Method & Metric Progression*: Chronological diffs across models, algorithms, and benchmark datasets.
+   - *Finding Dynamics*: Documents whether subsequent papers confirm, extend, or contradict earlier findings.
+7. **Transparent Research Gap Engine**: Detects recurring limitations and evaluation voids across papers. Assigns a formula-based evidence score, conducts targeted external verification against OpenAlex, and includes clear limitation disclosures on what the corpus cannot prove.
+8. **Attributed RAG Chat**: Hybrid retrieval combining dense vector cosine similarity and full-text SQL matching with Reciprocal Rank Fusion (RRF). Answers structured as *Evidence* (with verbatim quotes and page numbers), *Interpretation*, and *Suggestions*.
+9. **Manuscript Comparison & Gap Benchmarking**: Upload your own research draft to evaluate claimed contributions, detect missing related citations, and analyze semantic distance relative to the project corpus.
+
 ---
 
-## 🚀 Quick Setup & Run
+## 2. Database Schema (Supabase PostgreSQL + pgvector)
 
-### 1. Backend Setup
+```mermaid
+erDiagram
+    PROFILES ||--o{ RESEARCH_PROJECTS : owns
+    RESEARCH_PROJECTS ||--o{ PROJECT_PAPERS : contains
+    PAPERS ||--o{ PROJECT_PAPERS : included_in
+    PAPERS ||--o{ PAPER_CHUNKS : chunked_into
+    PAPERS ||--o{ PAPER_FACTS : extracts
+    PAPERS ||--o{ PAPER_DOCUMENTS : stored_in
+    PAPERS ||--o{ PAPER_REFERENCES : cites
+    RESEARCH_PROJECTS ||--o{ PAPER_RELATIONS : connects
+    RESEARCH_PROJECTS ||--o{ RESEARCH_CLUSTERS : groups
+    RESEARCH_CLUSTERS ||--o{ CLUSTER_MEMBERS : contains
+    RESEARCH_PROJECTS ||--o{ RESEARCH_GAPS : formulates
+    RESEARCH_PROJECTS ||--o{ EVOLUTION_TRANSITIONS : traces
+    RESEARCH_PROJECTS ||--o{ LITERATURE_REVIEWS : compiles
+    RESEARCH_PROJECTS ||--o{ CHAT_SESSIONS : records
+    CHAT_SESSIONS ||--o{ CHAT_MESSAGES : logs
+    RESEARCH_PROJECTS ||--o{ RESEARCH_JOBS : runs
+```
 
-```powershell
+- **`papers`**: Global, deduplicated academic metadata indexed by DOI, OpenAlex ID, Semantic Scholar ID, and title hash.
+- **`paper_chunks`**: Page-level and section-level chunk passages with `vector(384)` HNSW indexing and unique `(paper_id, text_hash, embedding_model)` constraints.
+- **`paper_facts`**: Structured scientific extractions (problem, method, dataset, metrics, results, limitations) with verbatim quotes and page attribution.
+- **`paper_relations`**: Graph edges with explicit `basis` (`citation_metadata` vs `embedding_similarity`).
+- **`research_gaps`**: Candidate gaps with transparent scoring formulas and OpenAlex verification.
+
+---
+
+## 3. Getting Started
+
+### Prerequisites
+- Python 3.11+
+- Node.js 18+ & npm
+- A Supabase Project with PostgreSQL and the `pgvector` extension enabled.
+
+### 1. Configure Backend Environment
+Copy `backend/.env.example` to `backend/.env` and provide your credentials:
+
+```bash
 cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m app.seed
-uvicorn app.main:app --reload
+cp .env.example .env
 ```
 
-### 2. Frontend Setup
+Key variables:
+- `DATABASE_URL`: Supabase IPv4 connection pooler URI (`postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:6543/postgres?sslmode=require`)
+- `SUPABASE_URL` & `SUPABASE_SERVICE_ROLE_KEY`: Supabase credentials for private object storage.
+- `LLM_PROVIDER`: `groq`, `openai`, `anthropic`, or `gemini`.
+- `GROQ_API_KEY`: API key if using Groq (e.g. `qwen/qwen3.8-27b`).
+- `OPENALEX_MAILTO`: Your email for the OpenAlex polite API pool.
 
-In another terminal:
+### 2. Database Migrations
+Run versioned Alembic migrations to create the schema and pgvector indexes:
 
-```powershell
+```bash
+cd backend
+alembic upgrade head
+```
+
+*(Optional safety utility: `python scripts/reset_database.py --yes-i-am-sure` drops all tables if starting over from a clean slate.)*
+
+### 3. Start Backend API & Worker
+Terminal 1 (FastAPI Server):
+```bash
+cd backend
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Terminal 2 (Durable Background Worker):
+```bash
+cd backend
+python -m app.worker
+```
+
+### 4. Start Frontend
+```bash
 cd frontend
 npm install
-npm run dev
+npm run dev -- --port 5174
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5174` in your browser.
 
 ---
 
-## 🗄️ Database Options: SQLite vs. Supabase (PostgreSQL)
+## 4. Empirical Evaluation & Tests
 
-The system automatically switches between **SQLite** and **Supabase (PostgreSQL)** based on the `DATABASE_URL` environment variable:
+### Automated Test Suite
+Run the full pytest suite (15 unit and integration tests covering JWT auth, cross-user denial, PDF parsing, OCR detection, deduplication, ranking, citation resolution, gap scoring, and worker locks):
 
-### Option A: Local SQLite (Default)
-No setup required. The application automatically creates `backend/research_graph.db`.
-
-### Option B: Supabase (PostgreSQL)
-To connect to Supabase:
-1. Create a free project at [supabase.com](https://supabase.com).
-2. Go to **Project Settings** -> **Database** and copy your **URI connection string** (`postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/postgres`).
-3. Set your environment variable:
-   ```powershell
-   $env:DATABASE_URL="postgresql://postgres:your_password@db.your_ref.supabase.co:5432/postgres"
-   ```
-4. Run the seeder to populate tables and initial research corpus:
-   ```powershell
-   python -m app.seed
-   ```
-5. Start your backend! You can now view live data in both Supabase Studio and the in-app **Database** tab.
-
----
-
-## 🤖 LLM & RAG Configuration
-
-The RAG chat engine supports multiple providers:
-
-- **Local Dynamic (Default)**: Zero-hallucination dynamic context extraction & citation generation. No API key required.
-- **OpenAI**:
-  ```powershell
-  $env:LLM_PROVIDER="openai"
-  $env:OPENAI_API_KEY="sk-..."
-  ```
-- **Google Gemini**:
-  ```powershell
-  $env:LLM_PROVIDER="gemini"
-  $env:GEMINI_API_KEY="AIza..."
-  ```
-- **Groq (Fast Llama 3.3)**:
-  ```powershell
-  $env:LLM_PROVIDER="groq"
-  $env:GROQ_API_KEY="gsk_..."
-  ```
-
----
-
-## 🧪 Testing
-
-Run automated tests covering graph algorithms, database queries, grounded RAG synthesis, and file downloads:
-
-```powershell
+```bash
 cd backend
-python -m pytest
+python -m pytest tests/ -v
 ```
+
+### Discovery & Relevance Benchmark
+Execute the automated evaluation script across 3 representative disciplines (Materials Science, NLP, Genetics):
+
+```bash
+python evaluation/evaluate.py
+```
+Outputs empirical yield, deduplication rates, full-text availability, and vector cosine distributions in `evaluation/results.json`.
+
+---
+
+## 5. Deployment (Render & Supabase)
+
+`render.yaml` defines two production services:
+1. **Web Service**: Runs FastAPI with Gunicorn/Uvicorn, serves the compiled React production bundle, and executes `alembic upgrade head` on build.
+2. **Background Worker**: Continuously polls for queued research jobs using PostgreSQL `SELECT ... FOR UPDATE SKIP LOCKED`.
+
+---
+
+## 6. Limitations & Scientific Disclaimers
+
+- **Corpus Boundaries**: Underrepresentation or lack of evidence in a project corpus represents a candidate hypothesis within the retrieved literature—it does not prove absolute absence in the global scientific record.
+- **Open Access Reliance**: While metadata is indexed globally, full-text passage extraction depends on legal open-access PDF availability (Gold/Green OA or arXiv). When a publisher retains closed access, the system operates at the abstract level and marks the paper accordingly.

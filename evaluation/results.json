@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-10-24T20:57:24Z",
+  "embedding_model": "all-MiniLM-L6-v2",
+  "results": [
+    {
+      "topic": "perovskite solar cell degradation mechanisms",
+      "domain": "Materials Science & Energy",
+      "total_fetched": 20,
+      "unique_candidates": 16,
+      "dedup_rate": 0.2,
+      "open_access_ratio": 0.875,
+      "mean_relevance": 0.6225,
+      "min_relevance": 0.1646,
+      "max_relevance": 0.8787,
+      "fetch_latency_seconds": 13.51
+    },
+    {
+      "topic": "retrieval augmented generation attribution benchmarks",
+      "domain": "Computer Science & NLP",
+      "total_fetched": 20,
+      "unique_candidates": 20,
+      "dedup_rate": 0.0,
+      "open_access_ratio": 1.0,
+      "mean_relevance": 0.4788,
+      "min_relevance": 0.1575,
+      "max_relevance": 0.6717,
+      "fetch_latency_seconds": 11.39
+    },
+    {
+      "topic": "crispr cas9 off target cleavage detection",
+      "domain": "Biomedical & Genetics",
+      "total_fetched": 20,
+      "unique_candidates": 18,
+      "dedup_rate": 0.1,
+      "open_access_ratio": 0.889,
+      "mean_relevance": 0.5798,
+      "min_relevance": 0.0771,
+      "max_relevance": 0.7367,
+      "fetch_latency_seconds": 11.61
+    }
+  ]
+}

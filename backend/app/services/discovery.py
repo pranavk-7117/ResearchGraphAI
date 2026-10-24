@@ -1,421 +1,335 @@
 """
-T3: Topic Discovery Pipeline
-Fetches real academic papers from OpenAlex and Semantic Scholar,
-deduplicates, ranks by semantic relevance + citations, and ingests into workspace.
-All HTTP responses are cached on disk (24h TTL) keyed by query hash.
-Never invents papers; if APIs are unreachable and cache is empty, records in job error.
+Academic Paper Discovery Service for ResearchGraphAI.
+
+Fetches literature candidates across OpenAlex, Semantic Scholar, and arXiv.
+Performs robust multi-stage deduplication, vector-based semantic ranking,
+and records candidates in the database without auto-processing.
 """
+
+from datetime import datetime, timezone
 import hashlib
-import json
+import math
 import os
 import re
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
-
-import httpx
+from typing import Any
 from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
+from app.clients import ArxivClient, OpenAlexClient, RawCandidatePaper, SemanticScholarClient
 from app import models
-from app.services.embeddings import EmbeddingService, cosine_similarity, encode_embedding
+from app.services.embeddings import EmbeddingService, cosine_similarity
+from app.services.llm import LLMService
 
 
-_CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "discovery"
-_CACHE_TTL_HOURS = 24
-_OPENALEX_MAILTO = os.getenv("OPENALEX_MAILTO", "research@researchgraphai.com")
+def normalize_title(title: str) -> str:
+    """Normalize title for hashing and fuzzy comparison."""
+    clean = re.sub(r"[^\w\s]", "", title.lower())
+    return " ".join(clean.split())
+
+
+def hash_title(title: str) -> str:
+    return hashlib.sha256(normalize_title(title).encode("utf-8")).hexdigest()
 
 
 class DiscoveryService:
-    def __init__(self) -> None:
+    def __init__(self):
+        self.openalex = OpenAlexClient()
+        self.semantic_scholar = SemanticScholarClient()
+        self.arxiv = ArxivClient()
         self.embeddings = EmbeddingService()
+        self.llm = LLMService()
 
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
+    def expand_topic_queries(self, topic: str) -> list[str]:
+        """
+        Use LLM to expand a broad topic into focused academic search queries.
+        If LLM is unconfigured, returns [topic] without synthetic fixed templates.
+        """
+        if not self.llm.is_available():
+            return [topic]
 
-    def discover(
+        prompt = (
+            f"You are a research librarian. Given the user's research topic '{topic}', "
+            "generate 3 to 4 distinct academic keyword search queries to retrieve comprehensive, "
+            "foundational, and recent literature from scholarly databases. "
+            "Output strictly one search query per line with no numbers, bullets, or commentary."
+        )
+        try:
+            res = self.llm.complete(prompt)
+            queries = [q.strip() for q in res.splitlines() if q.strip()]
+            valid = [q for q in queries if len(q) > 3][:4]
+            if topic not in valid:
+                valid.insert(0, topic)
+            return valid
+        except Exception:
+            return [topic]
+
+    def discover_candidates(
         self,
         db: Session,
-        workspace_id: int,
+        project_id: int,
         topic: str,
-        max_papers: int = 25,
-        job_id: str | None = None,
-    ) -> list[models.Paper]:
+        limit: int = 25,
+        year_min: int | None = None,
+        year_max: int | None = None,
+        oa_only: bool = False,
+        ranking_mode: str = "balanced",
+    ) -> list[models.ProjectPaper]:
         """
-        Full discovery pipeline for a topic into a workspace.
-        Updates the Job row at key milestones if job_id is given.
+        Main discovery entry point: searches sources, deduplicates, ranks candidates,
+        and saves candidate records in project_papers.
         """
-        self._update_job(db, job_id, "running", 0.05, "Expanding queries…")
+        queries = self.expand_topic_queries(topic)
 
-        queries = self._expand_queries(topic)
-
-        self._update_job(db, job_id, "running", 0.10, f"Fetching papers for {len(queries)} queries…")
-
-        raw: list[dict] = []
-        for i, q in enumerate(queries):
-            try:
-                raw.extend(self._fetch_openalex(q, limit=25))
-            except Exception as exc:
-                self._update_job(db, job_id, "running", 0.10 + i * 0.04, f"OpenAlex error: {exc}")
-            try:
-                raw.extend(self._fetch_semantic_scholar(q, limit=15))
-            except Exception as exc:
-                self._update_job(db, job_id, "running", 0.10 + i * 0.04, f"S2 error: {exc}")
-
-        self._update_job(db, job_id, "running", 0.45, f"Deduplicating {len(raw)} raw results…")
-        deduped = self._dedup(raw)
-
-        # Filter: must have a non-empty abstract
-        deduped = [p for p in deduped if (p.get("abstract") or "").strip()]
-
-        self._update_job(db, job_id, "running", 0.55, f"Ranking {len(deduped)} unique papers…")
-        topic_embedding = self.embeddings.embed(topic)
-        ranked = self._rank(deduped, topic_embedding)[:max_papers]
-
-        self._update_job(db, job_id, "running", 0.65, f"Ingesting top {len(ranked)} papers…")
-        ingested: list[models.Paper] = []
-        for idx, paper_dict in enumerate(ranked):
-            try:
-                p = self._ingest_paper(db, workspace_id, paper_dict)
-                ingested.append(p)
-                progress = 0.65 + (idx + 1) / max(len(ranked), 1) * 0.30
-                self._update_job(db, job_id, "running", round(progress, 2), f"Ingested {idx + 1}/{len(ranked)}: {paper_dict['title'][:60]}")
-            except Exception as exc:
-                # Skip individual paper errors; do not fail the whole job
-                pass
-
-        # Update workspace status
-        ws = db.get(models.Workspace, workspace_id)
-        if ws:
-            ws.status = "ready"
-            ws.expanded_queries = json.dumps(queries)
+        # Update project filters and expanded queries
+        project = db.query(models.ResearchProject).filter(models.ResearchProject.id == project_id).first()
+        if project:
+            current_filters = project.filters or {}
+            current_filters.update({
+                "expanded_queries": queries,
+                "ranking_mode": ranking_mode,
+                "year_min": year_min,
+                "year_max": year_max,
+                "oa_only": oa_only,
+            })
+            project.filters = current_filters
             db.commit()
 
-        self._update_job(db, job_id, "completed", 1.0, f"Discovery complete — {len(ingested)} papers ingested.")
-        return ingested
+        raw_candidates: list[RawCandidatePaper] = []
+        per_query_limit = max(10, limit // len(queries) + 5)
 
-    # ------------------------------------------------------------------
-    # Query expansion
-    # ------------------------------------------------------------------
+        for q in queries:
+            raw_candidates.extend(self.openalex.search(q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
+            raw_candidates.extend(self.semantic_scholar.search(q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
+            raw_candidates.extend(self.arxiv.search(q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
 
-    def _expand_queries(self, topic: str) -> list[str]:
-        """Generate 5 search queries as variations of the topic (no LLM required)."""
-        t = topic.strip()
-        return [
-            t,
-            f"survey {t}",
-            f"{t} review",
-            f"{t} methods",
-            f"{t} applications",
-        ]
+        # 1. Deduplicate
+        deduped = self._deduplicate_candidates(raw_candidates)
 
-    # ------------------------------------------------------------------
-    # API fetchers with disk cache
-    # ------------------------------------------------------------------
+        # 2. Embed and Rank
+        ranked = self._rank_candidates(deduped, topic=topic, mode=ranking_mode, limit=limit)
 
-    def _cache_path(self, query: str, source: str) -> Path:
-        key = hashlib.md5(f"{source}:{query}".encode()).hexdigest()
-        return _CACHE_DIR / f"{key}.json"
+        # 3. Upsert global papers and project_papers
+        results = self._persist_candidates(db, project_id, ranked)
+        return results
 
-    def _cache_load(self, path: Path) -> list[dict] | None:
-        if not path.exists():
-            return None
-        try:
-            mtime = datetime.fromtimestamp(path.stat().st_mtime)
-            if datetime.now() - mtime > timedelta(hours=_CACHE_TTL_HOURS):
-                return None
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
-    def _cache_save(self, path: Path, data: list[dict]) -> None:
-        try:
-            _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
-
-    def _fetch_openalex(self, query: str, limit: int = 20) -> list[dict]:
-        cache_path = self._cache_path(query, "openalex")
-        cached = self._cache_load(cache_path)
-        if cached is not None:
-            return cached
-
-        url = "https://api.openalex.org/works"
-        params = {
-            "search": query,
-            "per-page": limit,
-            "mailto": _OPENALEX_MAILTO,
-            "filter": "has_abstract:true",
-            "select": "id,title,abstract_inverted_index,publication_year,authorships,doi,cited_by_count,open_access,primary_location",
-        }
-        try:
-            resp = httpx.get(url, params=params, timeout=15)
-            resp.raise_for_status()
-            works = resp.json().get("results", [])
-        except Exception as exc:
-            raise RuntimeError(f"OpenAlex fetch failed: {exc}") from exc
-
-        papers = []
-        for work in works:
-            title = work.get("title") or ""
-            if not title:
-                continue
-            abstract = self._reconstruct_abstract(work.get("abstract_inverted_index") or {})
-            authors_raw = work.get("authorships") or []
-            authors = ", ".join(
-                a.get("author", {}).get("display_name", "")
-                for a in authors_raw[:6]
-                if a.get("author", {}).get("display_name")
-            )
-            doi = (work.get("doi") or "").replace("https://doi.org/", "")
-            oa = work.get("open_access") or {}
-            pdf_url = oa.get("oa_url") or ""
-            loc = work.get("primary_location") or {}
-            venue = (loc.get("source") or {}).get("display_name") or ""
-            papers.append({
-                "title": title,
-                "abstract": abstract,
-                "year": work.get("publication_year"),
-                "authors": authors,
-                "doi": doi,
-                "citation_count": work.get("cited_by_count") or 0,
-                "url": work.get("id") or "",
-                "pdf_url": pdf_url,
-                "venue": venue,
-                "external_id": work.get("id") or "",
-                "source": "openalex",
-                "tldr": None,
-            })
-
-        self._cache_save(cache_path, papers)
-        return papers
-
-    def _reconstruct_abstract(self, inverted_index: dict) -> str:
-        """Reconstruct OpenAlex inverted-index abstract into plain text."""
-        if not inverted_index:
-            return ""
-        pos_word: dict[int, str] = {}
-        for word, positions in inverted_index.items():
-            for pos in positions:
-                pos_word[pos] = word
-        if not pos_word:
-            return ""
-        return " ".join(pos_word[i] for i in sorted(pos_word))
-
-    def _fetch_semantic_scholar(self, query: str, limit: int = 15) -> list[dict]:
-        cache_path = self._cache_path(query, "semantic_scholar")
-        cached = self._cache_load(cache_path)
-        if cached is not None:
-            return cached
-
-        url = "https://api.semanticscholar.org/graph/v1/paper/search"
-        params = {
-            "query": query,
-            "limit": limit,
-            "fields": "title,abstract,year,authors,citationCount,externalIds,openAccessPdf,venue,tldr",
-        }
-        try:
-            resp = httpx.get(url, params=params, timeout=15)
-            resp.raise_for_status()
-            data = resp.json().get("data", [])
-        except Exception as exc:
-            raise RuntimeError(f"Semantic Scholar fetch failed: {exc}") from exc
-
-        papers = []
-        for item in data:
-            title = item.get("title") or ""
-            if not title:
-                continue
-            abstract = item.get("abstract") or ""
-            authors = ", ".join(
-                a.get("name", "")
-                for a in (item.get("authors") or [])[:6]
-                if a.get("name")
-            )
-            ext_ids = item.get("externalIds") or {}
-            doi = ext_ids.get("DOI") or ""
-            oa = item.get("openAccessPdf") or {}
-            pdf_url = oa.get("url") or ""
-            tldr_obj = item.get("tldr") or {}
-            tldr = tldr_obj.get("text") if isinstance(tldr_obj, dict) else None
-            papers.append({
-                "title": title,
-                "abstract": abstract,
-                "year": item.get("year"),
-                "authors": authors,
-                "doi": doi,
-                "citation_count": item.get("citationCount") or 0,
-                "url": f"https://www.semanticscholar.org/paper/{item.get('paperId', '')}",
-                "pdf_url": pdf_url,
-                "venue": item.get("venue") or "",
-                "external_id": item.get("paperId") or "",
-                "source": "semantic_scholar",
-                "tldr": tldr,
-            })
-
-        self._cache_save(cache_path, papers)
-        return papers
-
-    # ------------------------------------------------------------------
-    # Deduplication
-    # ------------------------------------------------------------------
-
-    def _dedup(self, papers: list[dict]) -> list[dict]:
+    def _deduplicate_candidates(self, candidates: list[RawCandidatePaper]) -> list[RawCandidatePaper]:
         seen_dois: set[str] = set()
-        seen_titles: list[str] = []
-        result: list[dict] = []
+        seen_s2: set[str] = set()
+        seen_arxiv: set[str] = set()
+        seen_hashes: set[str] = set()
+        unique: list[RawCandidatePaper] = []
 
-        for p in papers:
-            doi = (p.get("doi") or "").strip().lower()
-            title = (p.get("title") or "").strip()
-
-            # Dedup by DOI first
-            if doi:
-                if doi in seen_dois:
+        for c in candidates:
+            # Check DOI
+            if c.doi:
+                doi_norm = c.doi.strip().lower()
+                if doi_norm in seen_dois:
                     continue
-                seen_dois.add(doi)
+                seen_dois.add(doi_norm)
 
-            # Dedup by fuzzy title
-            is_dup = any(
-                fuzz.token_set_ratio(title.lower(), existing.lower()) > 88
-                for existing in seen_titles
-            )
-            if is_dup:
+            # Check S2
+            if c.source == "semantic_scholar" and c.external_id:
+                if c.external_id in seen_s2:
+                    continue
+                seen_s2.add(c.external_id)
+
+            # Check arXiv
+            if c.source == "arxiv" and c.external_id:
+                if c.external_id in seen_arxiv:
+                    continue
+                seen_arxiv.add(c.external_id)
+
+            # Check normalized title hash
+            thash = hash_title(c.title)
+            if thash in seen_hashes:
                 continue
 
-            seen_titles.append(title)
-            result.append(p)
+            # Fuzzy match check against recent unique items
+            is_fuzzy_dup = False
+            norm_curr = normalize_title(c.title)
+            for u in unique[-50:]:
+                norm_u = normalize_title(u.title)
+                if fuzz.token_set_ratio(norm_curr, norm_u) > 88:
+                    is_fuzzy_dup = True
+                    break
 
-        return result
-
-    # ------------------------------------------------------------------
-    # Ranking
-    # ------------------------------------------------------------------
-
-    def _rank(self, papers: list[dict], topic_embedding: list[float]) -> list[dict]:
-        scored = []
-        for p in papers:
-            text = f"{p.get('title', '')} {p.get('abstract', '')}".strip()
-            if not text:
-                scored.append((0.0, p))
+            if is_fuzzy_dup:
                 continue
-            try:
-                emb = self.embeddings.embed(text[:1000])
-                sem_score = cosine_similarity(topic_embedding, emb)
-            except Exception:
-                sem_score = 0.0
-            cite_score = min((p.get("citation_count") or 0) / 500.0, 1.0)
-            total = sem_score * 0.6 + cite_score * 0.4
-            scored.append((total, p))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [p for _, p in scored]
+            seen_hashes.add(thash)
+            unique.append(c)
 
-    # ------------------------------------------------------------------
-    # Ingestion
-    # ------------------------------------------------------------------
+        return unique
 
-    def _ingest_paper(self, db: Session, workspace_id: int, paper_dict: dict) -> models.Paper:
-        title = paper_dict.get("title") or "Untitled"
-        abstract = paper_dict.get("abstract") or ""
-        embed_text = f"{title}\n{abstract}"
-        whole_embedding = self.embeddings.embed(embed_text[:1000])
+    def _rank_candidates(
+        self,
+        candidates: list[RawCandidatePaper],
+        topic: str,
+        mode: str = "balanced",
+        limit: int = 25,
+    ) -> list[tuple[RawCandidatePaper, float, dict[str, Any]]]:
+        if not candidates:
+            return []
 
-        paper = models.Paper(
-            workspace_id=workspace_id,
-            title=title,
-            authors=paper_dict.get("authors") or "",
-            abstract=abstract,
-            year=paper_dict.get("year"),
-            source_type="discovered",
-            full_text="",
-            whole_embedding=encode_embedding(whole_embedding),
-            doi=paper_dict.get("doi") or None,
-            external_id=paper_dict.get("external_id") or None,
-            citation_count=paper_dict.get("citation_count") or 0,
-            venue=paper_dict.get("venue") or None,
-            url=paper_dict.get("url") or None,
-            pdf_url=paper_dict.get("pdf_url") or None,
-            tldr=paper_dict.get("tldr") or None,
-        )
-        db.add(paper)
-        db.flush()  # get paper.id without full commit
+        # Embed topic
+        topic_vector = self.embeddings.embed(topic)
 
-        # Store abstract as a single chunk for RAG
-        if abstract:
-            chunk_emb = self.embeddings.embed(abstract[:1000])
-            db.add(models.PaperChunk(
-                workspace_id=workspace_id,
-                paper_id=paper.id,
-                chunk_index=0,
-                text=abstract[:2000],
-                embedding=encode_embedding(chunk_emb),
-            ))
+        # Batch embed candidate title + abstract
+        texts_to_embed = [
+            f"{c.title}. {c.abstract or ''}".strip()
+            for c in candidates
+        ]
+        doc_vectors = self.embeddings.embed_batch(texts_to_embed)
 
-        # Link similarity edges to existing workspace papers
-        existing = (
-            db.query(models.Paper)
-            .filter(
-                models.Paper.workspace_id == workspace_id,
-                models.Paper.id != paper.id,
-                models.Paper.whole_embedding.is_not(None),
+        current_year = datetime.now(timezone.utc).year
+
+        # Configurable ranking weights
+        if mode == "recent":
+            w_rel, w_rec, w_cit, w_oa = 0.35, 0.45, 0.10, 0.10
+        elif mode == "citations":
+            w_rel, w_rec, w_cit, w_oa = 0.35, 0.10, 0.45, 0.10
+        elif mode == "relevant":
+            w_rel, w_rec, w_cit, w_oa = 0.70, 0.10, 0.10, 0.10
+        else:  # balanced
+            w_rel, w_rec, w_cit, w_oa = 0.50, 0.20, 0.15, 0.15
+
+        scored: list[tuple[RawCandidatePaper, float, dict[str, Any]]] = []
+
+        for candidate, vector in zip(candidates, doc_vectors):
+            # 1. Semantic similarity
+            sim = max(0.0, cosine_similarity(topic_vector, vector))
+
+            # 2. Recency score (decay over 25 years)
+            if candidate.year and candidate.year > 1900:
+                recency = max(0.0, 1.0 - (current_year - candidate.year) / 25.0)
+            else:
+                recency = 0.3
+
+            # 3. Citation influence (log-scaled)
+            cit_score = min(1.0, math.log1p(candidate.citation_count) / math.log1p(500))
+
+            # 4. Open-access availability
+            oa_score = 1.0 if candidate.oa_pdf_url else 0.2
+
+            total_score = (
+                sim * w_rel +
+                recency * w_rec +
+                cit_score * w_cit +
+                oa_score * w_oa
             )
-            .all()
-        )
-        SIMILARITY_THRESHOLD = 0.72
-        for other in existing:
-            try:
-                score = cosine_similarity(whole_embedding, list(other.whole_embedding))
-                if score >= SIMILARITY_THRESHOLD:
-                    db.add(models.Edge(
-                        workspace_id=workspace_id,
-                        source_paper_id=paper.id,
-                        target_paper_id=other.id,
-                        edge_type="similarity",
-                        relation_label="similar",
-                        confidence=round(score, 3),
-                    ))
-                    db.add(models.Edge(
-                        workspace_id=workspace_id,
-                        source_paper_id=other.id,
-                        target_paper_id=paper.id,
-                        edge_type="similarity",
-                        relation_label="similar",
-                        confidence=round(score, 3),
-                    ))
-            except Exception:
-                pass
 
-        db.commit()
-        db.refresh(paper)
-        return paper
+            score_components = {
+                "total_score": round(total_score, 4),
+                "semantic_relevance": round(sim, 4),
+                "recency_score": round(recency, 4),
+                "citation_influence": round(cit_score, 4),
+                "open_access_score": round(oa_score, 4),
+                "ranking_mode": mode,
+                "weights": {
+                    "relevance": w_rel,
+                    "recency": w_rec,
+                    "citations": w_cit,
+                    "open_access": w_oa,
+                },
+            }
 
-    # ------------------------------------------------------------------
-    # Job management
-    # ------------------------------------------------------------------
+            scored.append((candidate, total_score, score_components))
 
-    def _update_job(
+        # Sort descending by total score
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:limit]
+
+    def _persist_candidates(
         self,
         db: Session,
-        job_id: str | None,
-        status: str,
-        progress: float,
-        message: str,
-        error: str | None = None,
-    ) -> None:
-        if not job_id:
-            return
-        try:
-            job = db.get(models.Job, job_id)
-            if job:
-                job.status = status
-                job.progress = progress
-                job.message = message[:500]
-                if error:
-                    job.error = error
-                job.updated_at = datetime.utcnow()
-                db.commit()
-        except Exception:
-            pass  # Never let job tracking crash the discovery pipeline
+        project_id: int,
+        ranked: list[tuple[RawCandidatePaper, float, dict[str, Any]]],
+    ) -> list[models.ProjectPaper]:
+        persisted_entries: list[models.ProjectPaper] = []
+
+        for rank_idx, (cand, score, components) in enumerate(ranked, start=1):
+            thash = hash_title(cand.title)
+
+            # Find or create Paper
+            paper = None
+            if cand.doi:
+                paper = db.query(models.Paper).filter(models.Paper.doi == cand.doi).first()
+            if not paper:
+                paper = db.query(models.Paper).filter(models.Paper.title_hash == thash).first()
+
+            if not paper:
+                paper = models.Paper(
+                    doi=cand.doi,
+                    openalex_id=cand.external_id if cand.source == "openalex" else None,
+                    s2_id=cand.external_id if cand.source == "semantic_scholar" else None,
+                    arxiv_id=cand.external_id if cand.source == "arxiv" else None,
+                    title_hash=thash,
+                    title=cand.title,
+                    abstract=cand.abstract,
+                    authors=cand.authors,
+                    year=cand.year,
+                    date=cand.date,
+                    venue=cand.venue,
+                    url=cand.url,
+                    oa_status=cand.oa_status,
+                    oa_pdf_url=cand.oa_pdf_url,
+                    license=cand.license,
+                    citation_count=cand.citation_count,
+                    source_name=cand.source,
+                    external_id=cand.external_id,
+                    original_url=cand.url,
+                )
+                db.add(paper)
+                db.flush()
+
+            # Find or create ProjectPaper
+            project_paper = (
+                db.query(models.ProjectPaper)
+                .filter(
+                    models.ProjectPaper.project_id == project_id,
+                    models.ProjectPaper.paper_id == paper.id,
+                )
+                .first()
+            )
+
+            if not project_paper:
+                project_paper = models.ProjectPaper(
+                    project_id=project_id,
+                    paper_id=paper.id,
+                    rank=rank_idx,
+                    relevance_score=score,
+                    score_components=components,
+                    selected=False,  # Discovery strictly produces candidates
+                    processing_status="discovered",
+                    abstract_only=cand.metadata_only,
+                )
+                db.add(project_paper)
+            else:
+                project_paper.rank = rank_idx
+                project_paper.relevance_score = score
+                project_paper.score_components = components
+
+            # Store raw references if available
+            for ref in cand.raw_references[:20]:
+                existing_ref = (
+                    db.query(models.PaperReference)
+                    .filter(
+                        models.PaperReference.citing_paper_id == paper.id,
+                        models.PaperReference.raw_reference == str(ref),
+                    )
+                    .first()
+                )
+                if not existing_ref:
+                    db.add(
+                        models.PaperReference(
+                            citing_paper_id=paper.id,
+                            raw_reference=str(ref),
+                            source="api",
+                            resolved=False,
+                        )
+                    )
+
+            persisted_entries.append(project_paper)
+
+        db.commit()
+        return persisted_entries
