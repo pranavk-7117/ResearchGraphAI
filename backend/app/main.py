@@ -33,6 +33,15 @@ async def lifespan(app: FastAPI):
         print(f"[ResearchGraphAI] Startup DB Check: {health_status}")
     finally:
         db.close()
+
+    # Optional in-process worker for single-service deployments (e.g. Render free tier)
+    if os.getenv("RUN_WORKER_IN_PROCESS", "true").lower() in ("true", "1", "yes"):
+        import threading
+        from app.worker import main as run_worker
+        worker_thread = threading.Thread(target=run_worker, daemon=True, name="in_process_worker")
+        worker_thread.start()
+        print("[ResearchGraphAI] In-process background job worker thread started.")
+
     yield
     # Shutdown logic if needed
 
@@ -60,6 +69,7 @@ configured_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=configured_origins or default_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

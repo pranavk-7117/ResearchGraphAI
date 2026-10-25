@@ -212,7 +212,14 @@ export type PaperAnalysis = {
   created_at: string;
 };
 
-const BASE_URL = import.meta.env.VITE_API_URL || "/api";
+function getBaseUrl(): string {
+  const envUrl = (import.meta.env.VITE_API_URL || "").trim();
+  if (!envUrl) return "/api";
+  const stripped = envUrl.replace(/\/+$/, "");
+  return stripped.endsWith("/api") ? stripped : `${stripped}/api`;
+}
+
+const BASE_URL = getBaseUrl();
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem("rg_auth_token");

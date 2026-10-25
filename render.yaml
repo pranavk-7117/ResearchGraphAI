@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: research-graph-ai-web
+    name: research-graph-ai-backend
     runtime: python
     plan: free
-    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
+    buildCommand: pip install -r backend/requirements.txt
     startCommand: cd backend && alembic upgrade head && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
@@ -22,25 +22,7 @@ services:
         sync: false
       - key: OPENALEX_MAILTO
         sync: false
-
-  - type: worker
-    name: research-graph-ai-worker
-    runtime: python
-    plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && python -m app.worker
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.4
-      - key: DATABASE_URL
-        sync: false # Supabase PostgreSQL connection pooler URI
-      - key: SUPABASE_URL
+      - key: CORS_ORIGINS
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: LLM_PROVIDER
-        value: groq
-      - key: GROQ_API_KEY
-        sync: false
-      - key: OPENALEX_MAILTO
-        sync: false
+      - key: RUN_WORKER_IN_PROCESS
+        value: "true"
