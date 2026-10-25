@@ -317,6 +317,8 @@ export const api = {
 
   // Review & BibTeX
   review: {
+    get: (projectId: number) =>
+      request<LiteratureReview>(`/projects/${projectId}/literature-review`),
     generate: (projectId: number) =>
       request<LiteratureReview>(`/projects/${projectId}/literature-review`, { method: "POST" }),
     bibtex: (projectId: number) => request<{ bibtex: string }>(`/projects/${projectId}/bibtex`),

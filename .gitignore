@@ -1,6 +1,7 @@
 backend/.venv/
 backend/research_graph.db
 backend/.cache/
+backend/storage/
 *.log
 *.pyc
 frontend/node_modules/

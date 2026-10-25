@@ -11,9 +11,22 @@ export function ReviewPage({ project }: { project: Project | null }) {
 
   useEffect(() => {
     if (project) {
-      loadBibtex();
+      loadReviewAndBibtex();
     }
   }, [project?.id]);
+
+  async function loadReviewAndBibtex() {
+    if (!project) return;
+    loadBibtex();
+    try {
+      const existing = await api.review.get(project.id);
+      if (existing) {
+        setReview(existing);
+      }
+    } catch {
+      // not generated yet
+    }
+  }
 
   async function loadBibtex() {
     if (!project) return;

@@ -27,6 +27,9 @@ export function EvolutionPage({ project }: { project: Project | null }) {
     try {
       const res = await api.evolution.get(project.id);
       setData(res);
+      if (res.citation_timeline.length === 0 && res.method_progression.length > 0) {
+        setActiveTab("method_progression");
+      }
     } catch (err: any) {
       setError(err?.message || "Failed to load evolution analysis.");
     } finally {
@@ -137,14 +140,34 @@ export function EvolutionPage({ project }: { project: Project | null }) {
       {loading ? (
         <p style={{ color: "#64748b" }}>Analyzing evolution chain from corpus facts...</p>
       ) : currentItems.length === 0 ? (
-        <article className="panel" style={{ padding: 32, textAlign: "center", color: "#64748b" }}>
-          <Info size={32} style={{ margin: "0 auto 8px", opacity: 0.5 }} />
-          <h3>No Transitions Identified in this View</h3>
-          <p style={{ fontSize: 13 }}>
+        <article className="panel" style={{ padding: 36, textAlign: "center", color: "#64748b" }}>
+          <Info size={36} style={{ margin: "0 auto 12px", opacity: 0.6, color: "#3b82f6" }} />
+          <h3 style={{ marginBottom: 8, color: "#1e293b" }}>No Transitions in this Specific View</h3>
+          <p style={{ fontSize: 13, maxWidth: 520, margin: "0 auto 16px", lineHeight: 1.5 }}>
             {activeTab === "citation_timeline"
-              ? "No verified citation edges exist between the papers currently processed in this project. Papers may be independently published."
-              : "Insufficient extracted fact signals to establish chronological progression. Ensure candidate papers are selected and processed."}
+              ? "No direct verified citation records exist between these specific papers (papers were published independently across different venues)."
+              : "Insufficient extracted signals to establish chronological progression in this view."}
           </p>
+          {data.method_progression.length > 0 && activeTab !== "method_progression" && (
+            <button
+              onClick={() => setActiveTab("method_progression")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "9px 18px",
+                background: "#2563eb",
+                color: "white",
+                border: "none",
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              Switch to Method & Metric Progression ({data.method_progression.length} transitions) <ChevronRight size={15} />
+            </button>
+          )}
         </article>
       ) : (
         <div style={{ position: "relative", paddingLeft: 24, borderLeft: "2px solid #cbd5e1", display: "flex", flexDirection: "column", gap: 24 }}>

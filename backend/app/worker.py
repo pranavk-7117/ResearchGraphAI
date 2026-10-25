@@ -48,15 +48,22 @@ def main():
     while RUNNING:
         try:
             db = SessionLocal()
+            job_id = None
+            job_type = None
+            job_project_id = None
             try:
                 job = JobService.acquire_next_job(db, worker_id=worker_id)
+                if job:
+                    job_id = str(job.id)
+                    job_type = str(job.type)
+                    job_project_id = job.project_id
             finally:
                 db.close()
 
-            if job:
-                print(f"[Worker] Acquired job {job.id} (type: {job.type}, project_id: {job.project_id}). Executing...")
-                JobService.execute_job(job.id)
-                print(f"[Worker] Finished execution for job {job.id}.")
+            if job_id:
+                print(f"[Worker] Acquired job {job_id} (type: {job_type}, project_id: {job_project_id}). Executing...")
+                JobService.execute_job(job_id)
+                print(f"[Worker] Finished execution for job {job_id}.")
             else:
                 time.sleep(poll_interval)
         except Exception as e:

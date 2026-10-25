@@ -9,6 +9,7 @@ Manages background jobs with:
 """
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import os
 import time
 import uuid
@@ -16,6 +17,7 @@ from typing import Any
 import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app import models
 from app.database import SessionLocal
@@ -25,6 +27,7 @@ from app.services.embeddings import EmbeddingService
 from app.services.evolution import EvolutionService
 from app.services.facts_extraction import FactExtractionService
 from app.services.gaps import GapsService
+from app.services.literature_review import LiteratureReviewService
 from app.services.pdf_processing import PDFProcessingService
 from app.services.relations import RelationsService
 from app.storage import storage_service
@@ -103,7 +106,8 @@ class JobService:
             job = db.query(models.ResearchJob).filter(models.ResearchJob.id == job_id).first()
             if job:
                 job.status = "failed"
-                job.errors.append(str(e))
+                job.errors = list(job.errors or []) + [str(e)]
+                flag_modified(job, "errors")
                 db.commit()
         finally:
             db.close()
@@ -205,51 +209,74 @@ class JobService:
         per_paper_results = dict(job.per_paper_results or {})
         warnings = list(job.warnings or [])
 
+        # Fast parallel pre-fetch of PDFs (5 concurrent workers, 7s timeout)
+        pdf_urls_map: dict[int, str] = {}
+        for pp in selected_project_papers:
+            p_obj = db.query(models.Paper.id, models.Paper.oa_pdf_url).filter(models.Paper.id == pp.paper_id).first()
+            if p_obj and p_obj.oa_pdf_url:
+                pdf_urls_map[p_obj.id] = p_obj.oa_pdf_url
+
+        pdf_cache: dict[int, bytes | None] = {}
+        def fetch_pdf(pid: int, url: str) -> tuple[int, bytes | None]:
+            try:
+                with httpx.Client(timeout=7.0, follow_redirects=True, headers={"User-Agent": "ResearchGraphAI/2.0"}) as client:
+                    resp = client.get(url)
+                    if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
+                        return (pid, resp.content)
+            except Exception:
+                return (pid, None)
+            return (pid, None)
+
+        if pdf_urls_map:
+            with ThreadPoolExecutor(max_workers=min(5, len(pdf_urls_map))) as pool:
+                futures = [pool.submit(fetch_pdf, pid, url) for pid, url in pdf_urls_map.items()]
+                for f in futures:
+                    try:
+                        pid, b = f.result()
+                        if b:
+                            pdf_cache[pid] = b
+                    except Exception:
+                        pass
+
         # Process each paper with isolation
         for idx, pp in enumerate(selected_project_papers, start=1):
-            paper = db.query(models.Paper).filter(models.Paper.id == pp.paper_id).first()
-            if not paper:
-                continue
-
-            job.stage = f"processing_paper_{idx}_of_{total_papers}"
-            job.progress = round(0.1 + 0.6 * (idx / total_papers), 2)
-            db.commit()
-
-            pp.processing_status = "downloading"
-            db.commit()
-
-            # Attempt PDF download if open access PDF is available
-            pdf_bytes = None
-            if paper.oa_pdf_url:
-                try:
-                    with httpx.Client(timeout=25.0, follow_redirects=True) as client:
-                        resp = client.get(paper.oa_pdf_url)
-                        if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
-                            pdf_bytes = resp.content
-                except Exception as dl_err:
-                    warnings.append(f"Failed to download PDF for '{paper.title}': {dl_err}")
-
-            # Extract text & chunks
             try:
+                paper = db.query(models.Paper).filter(models.Paper.id == pp.paper_id).first()
+                if not paper:
+                    continue
+
+                job.stage = f"processing_paper_{idx}_of_{total_papers}"
+                job.progress = round(0.1 + 0.6 * (idx / total_papers), 2)
+                db.commit()
+
+                pdf_bytes = pdf_cache.get(paper.id)
+
+                # Extract text & chunks
                 if pdf_bytes:
                     pp.processing_status = "extracting"
                     db.commit()
 
-                    # Save document in storage
+                    # Save document in storage idempotently
                     storage_path, sha256_hash, file_size = storage_service.save_document(
                         pdf_bytes, project_id=project.id
                     )
-                    doc_row = models.PaperDocument(
-                        paper_id=paper.id,
-                        project_id=project.id,
-                        storage_path=storage_path,
-                        sha256=sha256_hash,
-                        pages=1,
-                        bytes=file_size,
-                        source="discovered",
+                    doc_row = (
+                        db.query(models.PaperDocument)
+                        .filter(models.PaperDocument.sha256 == sha256_hash)
+                        .first()
                     )
-                    db.add(doc_row)
-                    db.flush()
+                    if not doc_row:
+                        doc_row = models.PaperDocument(
+                            paper_id=paper.id,
+                            project_id=project.id,
+                            storage_path=storage_path,
+                            sha256=sha256_hash,
+                            pages=1,
+                            bytes=file_size,
+                            source="discovered",
+                        )
+                        db.add(doc_row)
+                        db.flush()
 
                     extracted = pdf_service.process_pdf_bytes(pdf_bytes, known_title=paper.title)
                     pp.abstract_only = not extracted.full_text_available
@@ -313,20 +340,40 @@ class JobService:
                         )
                         db.add(chunk_row)
 
-                # Extract structured facts
-                pp.processing_status = "extracting_facts"
-                db.commit()
-                fact_service.extract_paper_facts(db, paper_id=paper.id, project_id=project.id)
+                # Extract structured facts idempotently (skip if already extracted)
+                existing_fact = (
+                    db.query(models.PaperFact)
+                    .filter(models.PaperFact.paper_id == paper.id)
+                    .first()
+                )
+                if not existing_fact:
+                    pp.processing_status = "extracting_facts"
+                    db.commit()
+                    fact_service.extract_paper_facts(db, paper_id=paper.id, project_id=project.id)
 
                 pp.processing_status = "completed"
                 per_paper_results[str(paper.id)] = {"status": "success", "abstract_only": pp.abstract_only}
                 db.commit()
             except Exception as e:
-                pp.processing_status = "error"
-                pp.error = str(e)
-                warnings.append(f"Error processing paper '{paper.title}': {e}")
-                per_paper_results[str(paper.id)] = {"status": "error", "error": str(e)}
-                db.commit()
+                db.rollback()
+                try:
+                    re_pp = (
+                        db.query(models.ProjectPaper)
+                        .filter(
+                            models.ProjectPaper.project_id == project.id,
+                            models.ProjectPaper.paper_id == pp.paper_id,
+                        )
+                        .first()
+                    )
+                    if re_pp:
+                        re_pp.processing_status = "error"
+                        re_pp.error = str(e)
+                        db.commit()
+                except Exception:
+                    pass
+                paper_title = paper.title if "paper" in locals() and paper else str(pp.paper_id)
+                warnings.append(f"Error processing paper '{paper_title}': {e}")
+                per_paper_results[str(pp.paper_id)] = {"status": "error", "error": str(e)}
 
         # Step 2: Build Relations (Citations + Semantic Similarity)
         job.stage = "building_relations"
@@ -344,7 +391,7 @@ class JobService:
 
         # Step 4: Evolution & Gaps
         job.stage = "synthesizing_evolution_and_gaps"
-        job.progress = 0.95
+        job.progress = 0.92
         db.commit()
         evolution_service = EvolutionService()
         evolution_service.generate_evolution(db, project_id=project.id)
@@ -352,10 +399,23 @@ class JobService:
         gaps_service = GapsService()
         gaps_service.detect_gaps(db, project_id=project.id)
 
+        # Step 5: Literature Review
+        job.stage = "generating_literature_review"
+        job.progress = 0.98
+        db.commit()
+        try:
+            review_service = LiteratureReviewService()
+            review_service.generate_review(db, project_id=project.id)
+        except Exception as rev_err:
+            warnings.append(f"Literature review generation note: {rev_err}")
+
         # Complete job
         job.status = "completed_with_warnings" if warnings else "completed"
         job.stage = "done"
         job.progress = 1.0
         job.warnings = warnings
         job.per_paper_results = per_paper_results
+        flag_modified(job, "warnings")
+        flag_modified(job, "per_paper_results")
+        db.commit()
         db.commit()

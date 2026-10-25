@@ -522,6 +522,31 @@ def submit_gap_feedback(
 # Literature Review & BibTeX
 # ==============================================================================
 
+@router.get("/projects/{project_id}/literature-review", response_model=schemas.LiteratureReviewOut)
+def get_literature_review(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve existing grounded literature review if previously generated."""
+    project = verify_project_ownership(project_id, user, db)
+    review = (
+        db.query(models.LiteratureReview)
+        .filter(models.LiteratureReview.project_id == project.id)
+        .order_by(models.LiteratureReview.created_at.desc())
+        .first()
+    )
+    if not review:
+        raise HTTPException(status_code=404, detail="No literature review generated yet for this project")
+    return schemas.LiteratureReviewOut(
+        id=review.id,
+        corpus_version=review.corpus_version,
+        sections=review.sections or [],
+        verification_status=review.verification_status,
+        created_at=review.created_at,
+    )
+
+
 @router.post("/projects/{project_id}/literature-review", response_model=schemas.LiteratureReviewOut)
 def generate_literature_review(
     project_id: int,

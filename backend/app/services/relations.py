@@ -63,18 +63,38 @@ class RelationsService:
                         target_paper_id = p.id
                         break
 
-            # Raw reference text matching title
+            # Raw reference matching (OpenAlex ID, S2 ID, arXiv ID, DOI, or Title)
             if not target_paper_id and ref.raw_reference:
                 ref_text_lower = ref.raw_reference.lower()
                 for p in papers:
-                    if p.id != ref.citing_paper_id:
-                        title_clean = p.title.lower()
-                        if len(title_clean) > 15 and title_clean in ref_text_lower:
+                    if p.id == ref.citing_paper_id:
+                        continue
+                    # Check OpenAlex ID
+                    if p.openalex_id:
+                        oa_short = p.openalex_id.split("/")[-1].lower()
+                        if oa_short in ref_text_lower:
                             target_paper_id = p.id
                             break
-                        elif fuzz.partial_ratio(title_clean, ref_text_lower) > 90:
-                            target_paper_id = p.id
-                            break
+                    # Check S2 ID
+                    if p.s2_id and p.s2_id.lower() in ref_text_lower:
+                        target_paper_id = p.id
+                        break
+                    # Check Arxiv ID
+                    if p.arxiv_id and p.arxiv_id.lower() in ref_text_lower:
+                        target_paper_id = p.id
+                        break
+                    # Check DOI inside raw reference
+                    if p.doi and p.doi.lower() in ref_text_lower:
+                        target_paper_id = p.id
+                        break
+                    # Check Title substring or fuzzy match
+                    title_clean = p.title.lower()
+                    if len(title_clean) > 15 and title_clean in ref_text_lower:
+                        target_paper_id = p.id
+                        break
+                    elif fuzz.partial_ratio(title_clean, ref_text_lower) > 90:
+                        target_paper_id = p.id
+                        break
 
             if target_paper_id:
                 ref.cited_paper_id = target_paper_id

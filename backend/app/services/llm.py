@@ -40,7 +40,7 @@ class LLMService:
                 self.provider = "none"
 
         self.groq_api_key = os.getenv("GROQ_API_KEY")
-        self.groq_model = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+        self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -156,7 +156,7 @@ class LLMService:
             "model": self.groq_model,
             "messages": messages,
             "temperature": 0.1,
-            "max_tokens": 4096,
+            "max_tokens": 1500,
         }
 
         with httpx.Client(timeout=45.0) as client:
@@ -165,6 +165,16 @@ class LLMService:
                 headers=headers,
                 json=payload,
             )
+            # If rate limit on gpt-oss-120b, fall back to gpt-oss-20b
+            if resp.status_code == 429 and self.groq_model != "openai/gpt-oss-20b":
+                payload["model"] = "openai/gpt-oss-20b"
+                payload["max_tokens"] = 1200
+                resp = client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+
             if resp.status_code != 200:
                 raise LLMProviderUnavailableError(
                     f"Groq API error ({resp.status_code}): {resp.text}"

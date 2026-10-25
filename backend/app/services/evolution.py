@@ -70,7 +70,7 @@ class EvolutionService:
         method_progression = []
         finding_dynamics = []
 
-        # 1. View A: Citation Timeline from verified citation edges
+        # 1. View A: Citation Timeline from verified citation edges (or thematic lineage fallback)
         citation_edges = [r for r in relations if r.relation_type == "cites"]
         for edge in citation_edges:
             citing = paper_map.get(edge.source_id)
@@ -100,6 +100,61 @@ class EvolutionService:
                 "explanation": explanation,
                 "basis": "citation_metadata",
             })
+
+        # If direct citations are absent between these specific papers, construct chronological semantic lineages
+        if not citation_timeline:
+            sim_edges = [
+                r for r in relations
+                if r.relation_type == "inferred_similarity" and (r.weight or 0.0) >= 0.65
+            ]
+            # Sort by similarity descending
+            sim_edges.sort(key=lambda x: x.weight or 0.0, reverse=True)
+            added_pairs = set()
+
+            for edge in sim_edges:
+                p_src = paper_map.get(edge.source_id)
+                p_tgt = paper_map.get(edge.target_id)
+                if not p_src or not p_tgt:
+                    continue
+
+                # Order earlier -> later
+                y_src = p_src.year or 9999
+                y_tgt = p_tgt.year or 9999
+                if y_src <= y_tgt:
+                    earlier, later = p_src, p_tgt
+                else:
+                    earlier, later = p_tgt, p_src
+
+                pair_key = (earlier.id, later.id)
+                if pair_key in added_pairs or earlier.id == later.id:
+                    continue
+                added_pairs.add(pair_key)
+
+                sim_pct = round((edge.weight or 0.7) * 100, 1)
+                explanation = (
+                    f"Chronological thematic lineage ({sim_pct}% semantic similarity): "
+                    f"'{later.title}' ({later.year or 'recent'}) builds conceptually upon earlier themes from '{earlier.title}' ({earlier.year or 'earlier'})."
+                )
+
+                trans = models.EvolutionTransition(
+                    project_id=project_id,
+                    from_paper_id=earlier.id,
+                    to_paper_id=later.id,
+                    kind="thematic_lineage",
+                    explanation=explanation,
+                    evidence=[{"basis": "Dense semantic similarity", "similarity_score": round(edge.weight or 0.0, 3)}],
+                    basis="semantic_similarity",
+                )
+                db.add(trans)
+                citation_timeline.append({
+                    "from_paper": {"id": earlier.id, "title": earlier.title, "year": earlier.year},
+                    "to_paper": {"id": later.id, "title": later.title, "year": later.year},
+                    "kind": "thematic_lineage",
+                    "explanation": explanation,
+                    "basis": "semantic_similarity",
+                })
+                if len(citation_timeline) >= 8:
+                    break
 
         # 2. View B: Method & Metric Progression (Chronological or Adjacent Facts)
         for i in range(len(papers) - 1):

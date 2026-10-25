@@ -7,6 +7,7 @@ and records candidates in the database without auto-processing.
 """
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import math
 import os
@@ -97,10 +98,21 @@ class DiscoveryService:
         raw_candidates: list[RawCandidatePaper] = []
         per_query_limit = max(10, limit // len(queries) + 5)
 
-        for q in queries:
-            raw_candidates.extend(self.openalex.search(q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
-            raw_candidates.extend(self.semantic_scholar.search(q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
-            raw_candidates.extend(self.arxiv.search(q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
+        # Fast parallel candidate retrieval across sources
+        tasks = []
+        with ThreadPoolExecutor(max_workers=min(9, len(queries) * 3)) as executor:
+            for q in queries:
+                tasks.append(executor.submit(self.openalex.search, q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
+                tasks.append(executor.submit(self.semantic_scholar.search, q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
+                tasks.append(executor.submit(self.arxiv.search, q, limit=per_query_limit, year_min=year_min, year_max=year_max, oa_only=oa_only))
+
+            for future in as_completed(tasks):
+                try:
+                    res = future.result()
+                    if res:
+                        raw_candidates.extend(res)
+                except Exception:
+                    continue
 
         # 1. Deduplicate
         deduped = self._deduplicate_candidates(raw_candidates)
