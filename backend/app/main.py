@@ -67,6 +67,7 @@ app.add_middleware(
 
 
 @app.get("/health", response_model=schemas.HealthOut)
+@app.get("/api/health", response_model=schemas.HealthOut)
 def health_check(db: Session = Depends(get_db)):
     """Health check verifying database connectivity and pgvector extension presence."""
     info = check_db_health(db)
