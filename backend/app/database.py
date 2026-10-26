@@ -34,6 +34,14 @@ if DATABASE_URL.startswith("sqlite"):
         "ResearchGraphAI requires Supabase PostgreSQL with the pgvector extension."
     )
 
+if "@db." in DATABASE_URL and ".supabase.co" in DATABASE_URL:
+    print(
+        "\n[ResearchGraphAI WARNING] DATABASE_URL points to direct Supabase host 'db.xxxx.supabase.co'.\n"
+        "Render free tier does not support IPv6 outbound network traffic.\n"
+        "Please use the Supabase IPv4 connection pooler URI instead:\n"
+        "Format: postgresql://postgres.[REF]:[PASSWORD]@aws-0-[REGION].pooler.supabase.com:5432/postgres?sslmode=require\n"
+    )
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
