@@ -66,6 +66,11 @@ export type GraphNode = {
   abstract_only: boolean;
   cluster_id: number | null;
   authors_str: string;
+  abstract?: string | null;
+  venue?: string | null;
+  doi?: string | null;
+  url?: string | null;
+  pagerank?: number;
 };
 
 export type GraphEdge = {

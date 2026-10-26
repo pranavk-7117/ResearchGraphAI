@@ -113,6 +113,11 @@ class GraphNode(BaseModel):
     abstract_only: bool = True
     cluster_id: int | None = None
     authors_str: str = ""
+    abstract: str | None = None
+    venue: str | None = None
+    doi: str | None = None
+    url: str | None = None
+    pagerank: float = 0.0
 
 
 class GraphEdge(BaseModel):

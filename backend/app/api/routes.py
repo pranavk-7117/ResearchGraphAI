@@ -353,6 +353,12 @@ def get_project_graph(
     )
     cluster_map = {m.paper_id: m.cluster_id for m in members}
 
+    # Compute PageRank centrality
+    from app.services.research_graph import NetworkXGraphService
+    G = NetworkXGraphService.build_project_graph(db, project.id)
+    graph_analytics = NetworkXGraphService.analyze_graph(G)
+    pagerank_map = graph_analytics.get("pagerank", {})
+
     nodes = []
     for pp, paper in project_papers:
         authors_list = [a.get("name", "") for a in (paper.authors or []) if isinstance(a, dict)]
@@ -365,6 +371,11 @@ def get_project_graph(
                 abstract_only=pp.abstract_only,
                 cluster_id=cluster_map.get(paper.id),
                 authors_str=", ".join(authors_list[:3]),
+                abstract=paper.abstract,
+                venue=paper.venue,
+                doi=paper.doi,
+                url=paper.original_url or (f"https://doi.org/{paper.doi}" if paper.doi else None),
+                pagerank=float(pagerank_map.get(paper.id, 0.0)),
             )
         )
 
