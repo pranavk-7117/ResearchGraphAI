@@ -105,6 +105,23 @@ export type Cluster = {
   members: ClusterMember[];
 };
 
+export type StreamPaperItem = {
+  id: number;
+  title: string;
+  year: number | null;
+  authors_str: string;
+  abstract?: string | null;
+  venue?: string;
+  pub_type?: string;
+  citation_count: number;
+  doi?: string | null;
+  url?: string | null;
+  topic_tag?: string;
+  key_contribution?: string;
+  gaps_solved?: string[];
+  new_aspects?: string[];
+};
+
 export type EvolutionPhase = {
   phase_num: number;
   start_year: number;
@@ -114,6 +131,7 @@ export type EvolutionPhase = {
   paper_count: number;
   icon?: string;
   dominant_theme?: string;
+  papers?: StreamPaperItem[];
 };
 
 export type EvolutionTransitionItem = {
@@ -126,6 +144,7 @@ export type EvolutionTransitionItem = {
   key_changes: string[];
   paper_count: number;
   kind?: string;
+  papers?: StreamPaperItem[];
 };
 
 export type EvolutionFocusTrend = {
@@ -135,6 +154,14 @@ export type EvolutionFocusTrend = {
     color: string;
     data: number[];
   }>;
+};
+
+export type AnnualMilestone = {
+  year: number;
+  paper_count: number;
+  top_theme: string;
+  milestone_title: string;
+  papers: StreamPaperItem[];
 };
 
 export type EvolutionData = {
@@ -165,6 +192,8 @@ export type EvolutionData = {
   key_insights?: string[];
   time_range?: { min_year: number; max_year: number };
   total_papers?: number;
+  paper_stream?: StreamPaperItem[];
+  annual_milestones?: AnnualMilestone[];
 };
 
 export type Gap = {

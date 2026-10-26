@@ -475,6 +475,8 @@ def get_evolution(
         key_insights=res.get("key_insights", []),
         time_range=res.get("time_range", {}),
         total_papers=res.get("total_papers", 0),
+        paper_stream=res.get("paper_stream", []),
+        annual_milestones=res.get("annual_milestones", []),
     )
 
 
@@ -499,6 +501,27 @@ def get_gaps(
         gaps_service = GapsService()
         gaps = gaps_service.detect_gaps(db, project.id)
 
+    # Deduplicate gaps (keeping highest evidence score) and clean up duplicate rows in DB
+    seen_statements = set()
+    unique_gaps = []
+    dup_ids = []
+    for g in gaps:
+        stmt_key = (g.gap_statement or "").strip().lower()
+        if not stmt_key:
+            continue
+        if stmt_key in seen_statements:
+            dup_ids.append(g.id)
+        else:
+            seen_statements.add(stmt_key)
+            unique_gaps.append(g)
+
+    if dup_ids:
+        try:
+            db.query(models.ResearchGap).filter(models.ResearchGap.id.in_(dup_ids)).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+
     return [
         schemas.GapOut(
             id=g.id,
@@ -516,7 +539,7 @@ def get_gaps(
             user_feedback=g.user_feedback,
             created_at=g.created_at,
         )
-        for g in gaps
+        for g in unique_gaps
     ]
 
 

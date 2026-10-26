@@ -31,7 +31,14 @@ export function GapsPage({ project }: { project: Project | null }) {
     setError(null);
     try {
       const data = await api.gaps.get(project.id);
-      setGaps(data);
+      const seen = new Set<string>();
+      const unique = data.filter((g) => {
+        const key = (g.gap_statement || "").trim().toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setGaps(unique);
     } catch (err: any) {
       setError(err?.message || "Failed to load candidate research gaps.");
     } finally {

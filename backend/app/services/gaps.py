@@ -45,11 +45,15 @@ class GapsService:
         project_id: int,
     ) -> list[models.ResearchGap]:
         """Detect and synthesize evidence-backed candidate research gaps."""
-        # Clear existing non-saved gaps for this project
+        # Clear existing non-saved gaps for this project (handling SQL NULL semantics)
+        from sqlalchemy import or_
         db.query(models.ResearchGap).filter(
             models.ResearchGap.project_id == project_id,
-            models.ResearchGap.user_feedback != "saved",
-        ).delete()
+            or_(
+                models.ResearchGap.user_feedback.is_(None),
+                models.ResearchGap.user_feedback != "saved",
+            ),
+        ).delete(synchronize_session=False)
         db.commit()
 
         project = db.query(models.ResearchProject).filter(models.ResearchProject.id == project_id).first()

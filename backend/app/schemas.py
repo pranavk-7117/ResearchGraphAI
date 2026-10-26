@@ -183,6 +183,8 @@ class EvolutionOut(BaseModel):
     key_insights: list[str] = []
     time_range: dict[str, Any] = {}
     total_papers: int = 0
+    paper_stream: list[dict[str, Any]] = []
+    annual_milestones: list[dict[str, Any]] = []
 
 
 # ==============================================================================

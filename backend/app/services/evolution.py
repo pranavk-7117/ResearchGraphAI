@@ -295,10 +295,43 @@ class EvolutionService:
             (4, p3_end + 1, max_year, sorted_clusters[3] if len(sorted_clusters) > 3 else f"Applied {topic} Systems"),
         ]
 
+        def serialize_paper(p: models.Paper) -> dict[str, Any]:
+            authors_list = [a.get("name", "") for a in (p.authors or []) if isinstance(a, dict)]
+            # Extract 2-4 key concept keywords from title
+            stopwords = {"a", "an", "the", "and", "or", "in", "on", "at", "for", "with", "of", "to", "by", "from", "using", "based"}
+            words = [w.strip(":,.-_()[]") for w in p.title.split() if len(w) > 3 and w.lower() not in stopwords]
+            aspect_tags = words[:4] if len(words) >= 4 else (words + [topic.split()[0]])[:3]
+
+            f = facts_map.get(p.id)
+            method_str = f.method.get("value") if f and f.method else None
+            lim_str = f.limitations.get("value") if f and f.limitations else None
+
+            key_contrib = method_str or (p.abstract[:130] + "..." if p.abstract else f"Empirical investigation in {p.title[:45]}.")
+            gap_solved = [f"Addresses earlier limitations in {topic.lower()}"] if not lim_str else [lim_str[:90]]
+
+            venue_str = p.venue or p.source_name or "Peer-Reviewed"
+            pub_type = "Journal" if any(k in venue_str.lower() for k in ["journal", "trans", "letters"]) else "Conference"
+
+            return {
+                "id": p.id,
+                "title": p.title,
+                "year": p.year,
+                "authors_str": ", ".join(authors_list[:3]) or "Authors indexed",
+                "abstract": p.abstract,
+                "venue": venue_str,
+                "pub_type": pub_type,
+                "citation_count": p.citation_count or 0,
+                "doi": p.doi,
+                "url": p.original_url or (f"https://doi.org/{p.doi}" if p.doi else None),
+                "topic_tag": paper_cluster_map.get(p.id, topic),
+                "key_contribution": key_contrib,
+                "gaps_solved": gap_solved,
+                "new_aspects": aspect_tags,
+            }
+
         phases_out = []
         for p_num, s_yr, e_yr, default_title in phase_windows:
             p_list = phase_papers_map[p_num]
-            # Dominant cluster label in this specific phase window
             phase_c_labels = [paper_cluster_map[p.id] for p in p_list if p.id in paper_cluster_map]
             top_cluster = max(set(phase_c_labels), key=phase_c_labels.count) if phase_c_labels else default_title
 
@@ -319,9 +352,15 @@ class EvolutionService:
                 "description": desc,
                 "paper_count": len(p_list),
                 "dominant_theme": title,
+                "papers": [serialize_paper(p) for p in p_list],
             })
 
-        # Transitions dynamically based on actual phases
+        # Transitions dynamically based on actual phases and exact paper sets
+        p1_2 = list({p.id: p for p in (phase_papers_map[1] + phase_papers_map[2])}.values())
+        p2_3 = list({p.id: p for p in (phase_papers_map[2] + phase_papers_map[3])}.values())
+        p3_4 = list({p.id: p for p in (phase_papers_map[3] + phase_papers_map[4])}.values())
+        p_rec = phase_papers_map[4]
+
         transitions_out = [
             {
                 "phase_from": 1,
@@ -335,7 +374,8 @@ class EvolutionService:
                     f"Introduction of specialized architectures for {topic}",
                     f"Adoption of quantitative empirical benchmarks",
                 ],
-                "paper_count": max(2, len(phase_papers_map[1]) // 2 + len(phase_papers_map[2]) // 2),
+                "paper_count": len(p1_2),
+                "papers": [serialize_paper(p) for p in p1_2],
             },
             {
                 "phase_from": 2,
@@ -349,7 +389,8 @@ class EvolutionService:
                     f"Transition from standalone techniques to integrated {topic} pipelines",
                     f"Evaluation across larger and more diverse benchmark datasets",
                 ],
-                "paper_count": max(2, len(phase_papers_map[2]) // 2 + len(phase_papers_map[3]) // 2),
+                "paper_count": len(p2_3),
+                "papers": [serialize_paper(p) for p in p2_3],
             },
             {
                 "phase_from": 3,
@@ -363,7 +404,8 @@ class EvolutionService:
                     f"Integration with interactive and responsive interfaces",
                     f"Enhanced robustness and real-time operational efficiency",
                 ],
-                "paper_count": max(2, len(phase_papers_map[3]) // 2 + len(phase_papers_map[4]) // 2),
+                "paper_count": len(p3_4),
+                "papers": [serialize_paper(p) for p in p3_4],
             },
             {
                 "badge": f"Recent Advancements  ({phases_out[3]['start_year']} – {phases_out[3]['end_year']})",
@@ -375,9 +417,34 @@ class EvolutionService:
                     f"Low-latency edge deployment and interactive control",
                     f"Convergence of autonomous intelligence and user-centered design",
                 ],
-                "paper_count": max(1, len(phase_papers_map[4])),
+                "paper_count": len(p_rec),
+                "papers": [serialize_paper(p) for p in p_rec],
             },
         ]
+
+        # Annual Milestones
+        papers_by_year: dict[int, list[models.Paper]] = {}
+        for p in papers:
+            yr = p.year or min_year
+            if yr not in papers_by_year:
+                papers_by_year[yr] = []
+            papers_by_year[yr].append(p)
+
+        annual_milestones = []
+        for yr in sorted(papers_by_year.keys()):
+            yr_papers = papers_by_year[yr]
+            c_labels = [paper_cluster_map[p.id] for p in yr_papers if p.id in paper_cluster_map]
+            top_theme = max(set(c_labels), key=c_labels.count) if c_labels else f"{topic} Advances"
+            annual_milestones.append({
+                "year": yr,
+                "paper_count": len(yr_papers),
+                "top_theme": top_theme,
+                "milestone_title": f"Milestone: {yr_papers[0].title[:55]}...",
+                "papers": [serialize_paper(p) for p in yr_papers],
+            })
+
+        # Paper Stream Lineage View (Image 3)
+        paper_stream = [serialize_paper(p) for p in papers]
 
         # Multi-cluster Focus Trends using actual project clusters
         trend_years = list(range(min_year, max_year + 1))
@@ -412,6 +479,8 @@ class EvolutionService:
             "finding_dynamics": finding_dynamics,
             "phases": phases_out,
             "transitions": transitions_out,
+            "annual_milestones": annual_milestones,
+            "paper_stream": paper_stream,
             "focus_trends": {"years": trend_years, "series": trend_series},
             "key_insights": key_insights,
             "time_range": {"min_year": min_year, "max_year": max_year},
