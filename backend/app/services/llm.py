@@ -152,35 +152,43 @@ class LLMService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        payload = {
-            "model": self.groq_model,
-            "messages": messages,
-            "temperature": 0.1,
-            "max_tokens": 1500,
-        }
+        # Robust list of models in order of priority
+        candidate_models = []
+        if self.groq_model:
+            candidate_models.append(self.groq_model)
+        for fallback in [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "llama-3.1-70b-versatile",
+            "mixtral-8x7b-32768",
+        ]:
+            if fallback not in candidate_models:
+                candidate_models.append(fallback)
 
+        last_error = "Unknown error"
         with httpx.Client(timeout=45.0) as client:
-            resp = client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers=headers,
-                json=payload,
-            )
-            # If rate limit on gpt-oss-120b, fall back to gpt-oss-20b
-            if resp.status_code == 429 and self.groq_model != "openai/gpt-oss-20b":
-                payload["model"] = "openai/gpt-oss-20b"
-                payload["max_tokens"] = 1200
-                resp = client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
+            for model_name in candidate_models:
+                payload = {
+                    "model": model_name,
+                    "messages": messages,
+                    "temperature": 0.1,
+                    "max_tokens": 1500,
+                }
+                try:
+                    resp = client.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        self.groq_model = model_name
+                        return data["choices"][0]["message"]["content"]
+                    last_error = f"Groq API error ({resp.status_code}) for model '{model_name}': {resp.text}"
+                except Exception as ex:
+                    last_error = f"Groq request exception for model '{model_name}': {ex}"
 
-            if resp.status_code != 200:
-                raise LLMProviderUnavailableError(
-                    f"Groq API error ({resp.status_code}): {resp.text}"
-                )
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+        raise LLMProviderUnavailableError(last_error)
 
     def _call_openai(self, prompt: str, system_prompt: str) -> str:
         headers = {

@@ -39,11 +39,15 @@ export function ChatPage({ project }: { project: Project | null }) {
         { role: "assistant", text: res.answer, citations: res.citations },
       ]);
     } catch (err: any) {
+      const errMsg = err?.message || "Internal error";
+      const friendlyMsg = errMsg.includes("Failed to fetch")
+        ? "Network connection issue: Unable to reach the backend API server. Please check your network connection and verify that the backend is active."
+        : errMsg;
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          text: `### Evidence\nUnable to retrieve grounded answer: ${err?.message || "Internal error"}.`,
+          text: `### Evidence\nUnable to retrieve grounded answer: ${friendlyMsg}`,
           citations: [],
         },
       ]);

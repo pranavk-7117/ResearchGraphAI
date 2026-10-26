@@ -636,19 +636,27 @@ def chat_with_corpus(
     """Query research corpus with hybrid retrieval and passage-attributed citations."""
     project = verify_project_ownership(project_id, user, db)
     chat_service = ChatService()
-    res = chat_service.query_rag(
-        db=db,
-        project_id=project.id,
-        question=data.question,
-        session_id=data.session_id,
-        paper_id_filter=data.paper_id_filter,
-    )
-    return schemas.ChatResponse(
-        session_id=res["session_id"],
-        answer=res["answer"],
-        citations=res["citations"],
-        retrieved_count=res["retrieved_count"],
-    )
+    try:
+        res = chat_service.query_rag(
+            db=db,
+            project_id=project.id,
+            question=data.question,
+            session_id=data.session_id,
+            paper_id_filter=data.paper_id_filter,
+        )
+        return schemas.ChatResponse(
+            session_id=res["session_id"],
+            answer=res["answer"],
+            citations=res.get("citations", []),
+            retrieved_count=res.get("retrieved_count", 0),
+        )
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chat retrieval failed: {str(exc)}",
+        )
 
 
 # ==============================================================================
