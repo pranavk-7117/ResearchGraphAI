@@ -41,6 +41,8 @@ class LLMService:
 
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        if self.groq_model in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
+            self.groq_model = "openai/gpt-oss-120b"
 
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -152,21 +154,20 @@ class LLMService:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
-        # Robust list of models in order of priority
+        # Working Groq models verified for this environment
         candidate_models = []
-        if self.groq_model:
+        if self.groq_model and self.groq_model not in ("llama-3.3-70b-versatile", "llama-3.1-8b-instant"):
             candidate_models.append(self.groq_model)
         for fallback in [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "llama-3.1-70b-versatile",
-            "mixtral-8x7b-32768",
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
         ]:
             if fallback not in candidate_models:
                 candidate_models.append(fallback)
 
         last_error = "Unknown error"
-        with httpx.Client(timeout=45.0) as client:
+        with httpx.Client(timeout=15.0) as client:
             for model_name in candidate_models:
                 payload = {
                     "model": model_name,

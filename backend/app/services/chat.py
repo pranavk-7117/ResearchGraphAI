@@ -207,6 +207,7 @@ class ChatService:
         paper_id_filter: int | None = None,
         top_k: int = 6,
     ) -> list[dict[str, Any]]:
+        """Fast, robust passage retrieval across project papers and chunks without blocking."""
         # Get project paper IDs
         q_papers = (
             db.query(models.ProjectPaper.paper_id)
@@ -221,103 +222,34 @@ class ChatService:
 
         # Fetch paper rows
         papers = db.query(models.Paper).filter(models.Paper.id.in_(paper_ids)).all()
-        papers_by_id = {p.id: p for p in papers}
+        if not papers:
+            return []
 
-        # Ensure chunks exist in paper_chunks for these papers
-        existing_chunks_count = (
-            db.query(models.PaperChunk)
-            .filter(models.PaperChunk.paper_id.in_(paper_ids))
-            .count()
-        )
+        clean_terms = [re.sub(r"[^\w\s]", "", w).strip().lower() for w in query.split()]
+        stop_words = {
+            "what", "which", "where", "about", "their", "there", "these", "those",
+            "have", "with", "from", "in", "the", "and", "for", "are", "primary",
+            "evaluated", "this", "that", "how", "why", "who", "when", "into",
+        }
+        terms = [w for w in clean_terms if len(w) > 2 and w not in stop_words][:6]
 
-        if existing_chunks_count == 0:
-            # Populate abstract chunks on the fly so papers are immediately indexed
-            for p in papers:
-                text_content = (p.abstract or p.title or "").strip()
-                if not text_content:
-                    continue
-                thash = hashlib.sha256(text_content.encode("utf-8")).hexdigest()
-                try:
-                    vec = self.embeddings.embed(text_content)
-                except Exception:
-                    vec = [0.0] * self.embeddings.dim
-                chunk_row = models.PaperChunk(
-                    paper_id=p.id,
-                    page_start=1,
-                    page_end=1,
-                    section="Abstract",
-                    chunk_index=0,
-                    text=text_content,
-                    text_hash=thash,
-                    embedding=vec,
-                    embedding_model=self.embeddings.model_name,
-                    embedding_version=self.embeddings.version,
-                )
-                db.add(chunk_row)
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+        scored_passages: list[dict[str, Any]] = []
 
-        # 1. Dense Vector Search (pgvector cosine)
-        vector_hits = []
+        # 1. Search full-text paper_chunks if present (fast SQL query, limit 10)
         try:
-            query_vector = self.embeddings.embed(query)
-            vector_str = f"[{','.join(str(v) for v in query_vector)}]"
-            vector_sql = text("""
-                SELECT 
-                    c.id as chunk_id,
-                    c.paper_id,
-                    c.page_start as page,
-                    c.section,
-                    c.text,
-                    p.title,
-                    p.authors,
-                    p.doi,
-                    p.year,
-                    1 - (c.embedding <=> CAST(:query_vec AS vector)) as similarity
-                FROM paper_chunks c
-                JOIN papers p ON p.id = c.paper_id
-                WHERE c.paper_id IN :paper_ids
-                ORDER BY c.embedding <=> CAST(:query_vec AS vector) ASC
-                LIMIT 15;
-            """).bindparams(bindparam("paper_ids", expanding=True))
-
-            res = db.execute(vector_sql, {"query_vec": vector_str, "paper_ids": paper_ids}).fetchall()
-            for r in res:
-                vector_hits.append({
-                    "chunk_id": r.chunk_id,
-                    "paper_id": r.paper_id,
-                    "page": r.page or 1,
-                    "section": r.section or "Body",
-                    "text": r.text,
-                    "title": r.title,
-                    "authors": r.authors,
-                    "doi": r.doi,
-                    "year": r.year,
-                    "score": float(r.similarity),
-                })
-        except Exception:
-            pass
-
-        # 2. Text Keyword Search
-        clean_terms = [re.sub(r"[^\w\s]", "", w).strip() for w in query.split()]
-        stop_words = {"what", "which", "where", "about", "their", "there", "these", "those", "have", "with", "from", "in", "the", "and", "for", "are", "primary", "evaluated"}
-        clean_terms = [w for w in clean_terms if len(w) > 3 and w.lower() not in stop_words][:5]
-
-        text_hits = []
-        if clean_terms:
-            try:
-                chunk_filters = [models.PaperChunk.text.ilike(f"%{term}%") for term in clean_terms]
+            if terms:
+                chunk_filters = [models.PaperChunk.text.ilike(f"%{term}%") for term in terms]
                 matched_chunks = (
                     db.query(models.PaperChunk, models.Paper)
                     .join(models.Paper, models.PaperChunk.paper_id == models.Paper.id)
                     .filter(models.PaperChunk.paper_id.in_(paper_ids), or_(*chunk_filters))
-                    .limit(15)
+                    .limit(10)
                     .all()
                 )
                 for c, p in matched_chunks:
-                    text_hits.append({
+                    text_lower = (c.text or "").lower()
+                    term_hits = sum(1 for t in terms if t in text_lower)
+                    scored_passages.append({
                         "chunk_id": c.id,
                         "paper_id": c.paper_id,
                         "page": c.page_start or 1,
@@ -327,43 +259,45 @@ class ChatService:
                         "authors": p.authors,
                         "doi": p.doi,
                         "year": p.year,
+                        "score": 10.0 + term_hits * 3.0,
                     })
-            except Exception:
-                pass
+        except Exception:
+            pass
 
-        # 3. Reciprocal Rank Fusion (RRF)
-        rrf_scores: dict[int, float] = {}
-        chunk_map: dict[int, dict[str, Any]] = {}
+        # 2. Score paper abstracts & titles
+        for p in papers:
+            title_lower = (p.title or "").lower()
+            abstract_lower = (p.abstract or "").lower()
+            term_score = 0
+            for t in terms:
+                if t in title_lower:
+                    term_score += 4.0
+                if t in abstract_lower:
+                    term_score += 1.5
 
-        k_rrf = 60.0
-        for rank, hit in enumerate(vector_hits):
-            cid = hit["chunk_id"]
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (k_rrf + rank + 1)
-            chunk_map[cid] = hit
+            citation_bonus = min(float(p.citation_count or 0) / 100.0, 2.0)
+            base_score = term_score + citation_bonus
 
-        for rank, hit in enumerate(text_hits):
-            cid = hit["chunk_id"]
-            rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (k_rrf + rank + 1)
-            if cid not in chunk_map:
-                chunk_map[cid] = hit
+            text_body = p.abstract if (p.abstract and len(p.abstract.strip()) > 30) else p.title
+            scored_passages.append({
+                "chunk_id": -(p.id),
+                "paper_id": p.id,
+                "page": 1,
+                "section": "Abstract",
+                "text": text_body,
+                "title": p.title,
+                "authors": p.authors,
+                "doi": p.doi,
+                "year": p.year,
+                "score": base_score,
+            })
 
-        sorted_cids = sorted(rrf_scores.keys(), key=lambda cid: rrf_scores[cid], reverse=True)
-        passages = [chunk_map[cid] for cid in sorted_cids[:top_k]]
+        # 3. Deduplicate by paper_id (keep highest scoring passage per paper)
+        best_by_paper: dict[int, dict[str, Any]] = {}
+        for item in scored_passages:
+            pid = item["paper_id"]
+            if pid not in best_by_paper or item["score"] > best_by_paper[pid]["score"]:
+                best_by_paper[pid] = item
 
-        # 4. Fallback if no passages matched specific keywords
-        if not passages and papers:
-            for p in papers[:top_k]:
-                passages.append({
-                    "chunk_id": -(p.id),
-                    "paper_id": p.id,
-                    "page": 1,
-                    "section": "Abstract",
-                    "text": p.abstract or p.title,
-                    "title": p.title,
-                    "authors": p.authors,
-                    "doi": p.doi,
-                    "year": p.year,
-                    "score": 0.5,
-                })
-
-        return passages
+        sorted_passages = sorted(best_by_paper.values(), key=lambda x: x["score"], reverse=True)
+        return sorted_passages[:top_k]

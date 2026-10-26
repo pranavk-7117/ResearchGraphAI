@@ -64,3 +64,40 @@ def test_chat_query_rag_with_passages():
     assert len(res["citations"]) == 1
     assert res["citations"][0]["paper_id"] == 10
     assert res["citations"][0]["ref"] == "[1]"
+
+
+def test_hybrid_retrieve_fast_scoring():
+    """Verify that _hybrid_retrieve scores and ranks paper abstracts quickly without blocking."""
+    from unittest.mock import MagicMock
+    db = MagicMock()
+    
+    # 2 mock project papers
+    db.query.return_value.filter.return_value.all.side_effect = [
+        [(1,), (2,)],  # project_papers query
+        [
+            MagicMock(
+                id=1,
+                title="Smart Insole for Diabetic Foot Ulcer Monitoring",
+                abstract="We evaluate FSR sensors and machine learning models for ulcer prevention.",
+                authors=[{"name": "Alice"}],
+                doi="10.111/abc",
+                year=2022,
+                citation_count=45,
+            ),
+            MagicMock(
+                id=2,
+                title="Generic Sensor Networks",
+                abstract="Overview of wireless communication protocols.",
+                authors=[{"name": "Bob"}],
+                doi="10.222/xyz",
+                year=2020,
+                citation_count=10,
+            ),
+        ],  # papers query
+    ]
+
+    chat_service = ChatService()
+    passages = chat_service._hybrid_retrieve(db, 999, "What methodologies are evaluated for diabetic foot ulcer?")
+    assert len(passages) >= 1
+    assert passages[0]["paper_id"] == 1
+    assert "FSR sensors" in passages[0]["text"]
