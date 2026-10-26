@@ -105,6 +105,38 @@ export type Cluster = {
   members: ClusterMember[];
 };
 
+export type EvolutionPhase = {
+  phase_num: number;
+  start_year: number;
+  end_year: number;
+  title: string;
+  description: string;
+  paper_count: number;
+  icon?: string;
+  dominant_theme?: string;
+};
+
+export type EvolutionTransitionItem = {
+  phase_from?: number;
+  phase_to?: number;
+  badge?: string;
+  year_range: string;
+  title: string;
+  description: string;
+  key_changes: string[];
+  paper_count: number;
+  kind?: string;
+};
+
+export type EvolutionFocusTrend = {
+  years: number[];
+  series: Array<{
+    name: string;
+    color: string;
+    data: number[];
+  }>;
+};
+
 export type EvolutionData = {
   citation_timeline: Array<{
     from_paper: { id: number; title: string; year: number | null };
@@ -127,6 +159,12 @@ export type EvolutionData = {
     explanation: string;
     basis: string;
   }>;
+  phases?: EvolutionPhase[];
+  transitions?: EvolutionTransitionItem[];
+  focus_trends?: EvolutionFocusTrend;
+  key_insights?: string[];
+  time_range?: { min_year: number; max_year: number };
+  total_papers?: number;
 };
 
 export type Gap = {

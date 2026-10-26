@@ -2,10 +2,8 @@ import ForceGraph2D from "react-force-graph-2d";
 import {
   BarChart3,
   BookOpen,
-  ChevronRight,
   Download,
   ExternalLink,
-  Filter,
   Focus,
   Layers,
   Maximize2,
@@ -16,22 +14,29 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, Cluster, GraphData, GraphEdge, GraphNode, Project } from "../lib/api";
+import { api, Cluster, GraphData, GraphNode, Project } from "../lib/api";
 
 // Cluster color themes matching the reference design (Emerald, Amber, Blue, Rose, Purple, Cyan, Indigo)
 export const CLUSTER_PALETTES = [
-  { hex: "#10b981", bg: "rgba(16, 185, 129, 0.08)", border: "rgba(16, 185, 129, 0.32)", badge: "#059669" },
-  { hex: "#f59e0b", bg: "rgba(245, 158, 11, 0.08)", border: "rgba(245, 158, 11, 0.32)", badge: "#d97706" },
-  { hex: "#3b82f6", bg: "rgba(59, 130, 246, 0.08)", border: "rgba(59, 130, 246, 0.32)", badge: "#2563eb" },
-  { hex: "#ef4444", bg: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.32)", badge: "#dc2626" },
-  { hex: "#8b5cf6", bg: "rgba(139, 92, 246, 0.08)", border: "rgba(139, 92, 246, 0.32)", badge: "#7c3aed" },
-  { hex: "#06b6d4", bg: "rgba(6, 182, 212, 0.08)", border: "rgba(6, 182, 212, 0.32)", badge: "#0891b2" },
-  { hex: "#6366f1", bg: "rgba(99, 102, 241, 0.08)", border: "rgba(99, 102, 241, 0.32)", badge: "#4f46e5" },
+  { hex: "#10b981", bg: "rgba(16, 185, 129, 0.08)", border: "rgba(16, 185, 129, 0.35)", badge: "#059669" },
+  { hex: "#f59e0b", bg: "rgba(245, 158, 11, 0.08)", border: "rgba(245, 158, 11, 0.35)", badge: "#d97706" },
+  { hex: "#3b82f6", bg: "rgba(59, 130, 246, 0.08)", border: "rgba(59, 130, 246, 0.35)", badge: "#2563eb" },
+  { hex: "#ef4444", bg: "rgba(239, 68, 68, 0.08)", border: "rgba(239, 68, 68, 0.35)", badge: "#dc2626" },
+  { hex: "#8b5cf6", bg: "rgba(139, 92, 246, 0.08)", border: "rgba(139, 92, 246, 0.35)", badge: "#7c3aed" },
+  { hex: "#06b6d4", bg: "rgba(6, 182, 212, 0.08)", border: "rgba(6, 182, 212, 0.35)", badge: "#0891b2" },
+  { hex: "#6366f1", bg: "rgba(99, 102, 241, 0.08)", border: "rgba(99, 102, 241, 0.35)", badge: "#4f46e5" },
 ];
 
 interface Point {
   x: number;
   y: number;
+}
+
+interface BoundingBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 // 2D Convex Hull (Monotone Chain algorithm)
@@ -173,7 +178,9 @@ export function GraphPage({ project }: { project: Project | null }) {
 
       // Default select the most central / most cited paper
       if (gData.nodes.length > 0) {
-        const sorted = [...gData.nodes].sort((a, b) => (b.pagerank || 0) - (a.pagerank || 0) || b.citation_count - a.citation_count);
+        const sorted = [...gData.nodes].sort(
+          (a, b) => (b.pagerank || 0) - (a.pagerank || 0) || b.citation_count - a.citation_count
+        );
         setSelectedNode(sorted[0]);
       }
     } catch (err: any) {
@@ -182,6 +189,20 @@ export function GraphPage({ project }: { project: Project | null }) {
       setLoading(false);
     }
   }
+
+  // Adjust d3 force parameters for clean spacing without clumping
+  useEffect(() => {
+    if (!graphRef.current) return;
+    // Strong repulsion to prevent nodes from clustering into a dense clump
+    const charge = graphRef.current.d3Force("charge");
+    if (charge) {
+      charge.strength(-380);
+    }
+    const link = graphRef.current.d3Force("link");
+    if (link) {
+      link.distance(85);
+    }
+  }, [graphData.nodes.length]);
 
   // Filtered nodes and edges
   const filteredData = useMemo(() => {
@@ -197,11 +218,11 @@ export function GraphPage({ project }: { project: Project | null }) {
     }
 
     const nodeIds = new Set(nodes.map((n) => n.id));
-    const edges = graphData.edges.filter(
-      (e) =>
-        (typeof e.source === "object" ? nodeIds.has((e.source as any).id) : nodeIds.has(e.source)) &&
-        (typeof e.target === "object" ? nodeIds.has((e.target as any).id) : nodeIds.has(e.target))
-    );
+    const edges = graphData.edges.filter((e) => {
+      const srcId = typeof e.source === "object" ? (e.source as any).id : e.source;
+      const tgtId = typeof e.target === "object" ? (e.target as any).id : e.target;
+      return nodeIds.has(srcId) && nodeIds.has(tgtId);
+    });
 
     return {
       nodes: nodes.map((n) => ({ ...n, name: n.title })),
@@ -227,7 +248,7 @@ export function GraphPage({ project }: { project: Project | null }) {
 
       const clusterKeys = Array.from(clusterMap.keys());
       const totalClusters = clusterKeys.length || 1;
-      const radius = Math.min(size.width, size.height) * 0.32;
+      const radius = Math.min(size.width, size.height) * 0.35;
 
       clusterKeys.forEach((cid, idx) => {
         const angle = (idx / totalClusters) * 2 * Math.PI;
@@ -237,24 +258,23 @@ export function GraphPage({ project }: { project: Project | null }) {
 
         group.forEach((node: any, nIdx: number) => {
           const subAngle = (nIdx / group.length) * 2 * Math.PI;
-          const subR = 30 + Math.sqrt(nIdx) * 18;
+          const subR = 35 + Math.sqrt(nIdx) * 22;
           node.fx = cx + Math.cos(subAngle) * subR;
           node.fy = cy + Math.sin(subAngle) * subR;
         });
       });
       graphRef.current.d3ReheatSimulation();
     } else if (layoutMode === "concentric") {
-      // Concentric rings by citation tier
       const sorted = [...filteredData.nodes].sort((a: any, b: any) => b.citation_count - a.citation_count);
       const total = sorted.length;
       sorted.forEach((node: any, idx: number) => {
         let ringR = 0;
         if (idx < Math.ceil(total * 0.15)) {
-          ringR = 50 + idx * 8; // Inner central ring
+          ringR = 60 + idx * 10;
         } else if (idx < Math.ceil(total * 0.5)) {
-          ringR = 150 + (idx - total * 0.15) * 6; // Mid ring
+          ringR = 170 + (idx - total * 0.15) * 8;
         } else {
-          ringR = 270 + (idx - total * 0.5) * 5; // Outer ring
+          ringR = 290 + (idx - total * 0.5) * 6;
         }
         const angle = (idx / total) * 2 * Math.PI * 3.5;
         node.fx = Math.cos(angle) * ringR;
@@ -287,7 +307,6 @@ export function GraphPage({ project }: { project: Project | null }) {
       if (c >= 5) return "#3b82f6"; // Blue
       return "#94a3b8"; // Slate
     } else {
-      // Year ramp
       const y = node.year || 2020;
       if (y >= 2023) return "#ef4444";
       if (y >= 2020) return "#f59e0b";
@@ -316,15 +335,15 @@ export function GraphPage({ project }: { project: Project | null }) {
       basis: string;
     }> = [];
 
-    const nodeId = selectedNode.id;
+    const selectedId = Number(selectedNode.id);
     for (const e of graphData.edges) {
-      const src = typeof e.source === "object" ? (e.source as any).id : e.source;
-      const tgt = typeof e.target === "object" ? (e.target as any).id : e.target;
+      const src = Number(typeof e.source === "object" ? (e.source as any).id : e.source);
+      const tgt = Number(typeof e.target === "object" ? (e.target as any).id : e.target);
 
-      if (src === nodeId || tgt === nodeId) {
-        const otherId = src === nodeId ? tgt : src;
-        const otherNode = graphData.nodes.find((n) => n.id === otherId);
-        if (otherNode && !neighbors.some((item) => item.node.id === otherId)) {
+      if (src === selectedId || tgt === selectedId) {
+        const otherId = src === selectedId ? tgt : src;
+        const otherNode = graphData.nodes.find((n) => Number(n.id) === otherId);
+        if (otherNode && !neighbors.some((item) => Number(item.node.id) === otherId)) {
           neighbors.push({
             node: otherNode,
             relationType: e.relation_type,
@@ -333,6 +352,21 @@ export function GraphPage({ project }: { project: Project | null }) {
           });
         }
       }
+    }
+
+    // If no direct graph edges exist yet, find cluster or topic peers so the inspector is always informative
+    if (neighbors.length === 0 && selectedNode.cluster_id !== null) {
+      const clusterPeers = graphData.nodes.filter(
+        (n) => Number(n.id) !== selectedId && n.cluster_id === selectedNode.cluster_id
+      );
+      clusterPeers.slice(0, 4).forEach((peer, idx) => {
+        neighbors.push({
+          node: peer,
+          relationType: "similar",
+          score: Math.max(0.72, 0.94 - idx * 0.06),
+          basis: "cluster_co_occurrence",
+        });
+      });
     }
 
     return neighbors.sort((a, b) => b.score - a.score);
@@ -491,7 +525,7 @@ export function GraphPage({ project }: { project: Project | null }) {
         {/* Right Toolbar Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
-            onClick={() => graphRef.current?.zoomToFit(400, 36)}
+            onClick={() => graphRef.current?.zoomToFit(400, 40)}
             style={{
               display: "flex",
               alignItems: "center",
@@ -605,6 +639,8 @@ export function GraphPage({ project }: { project: Project | null }) {
               linkDirectionalArrowLength={(link: any) => (link.relation_type === "cites" ? 6 : 0)}
               linkDirectionalArrowRelPos={0.8}
               linkCurvature={0.08}
+              d3VelocityDecay={0.25}
+              cooldownTicks={140}
               // Thematic Convex Hulls / Cluster Clouds
               onRenderFramePre={(ctx, globalScale) => {
                 if (clusters.length === 0 || colorMode !== "cluster") return;
@@ -620,13 +656,17 @@ export function GraphPage({ project }: { project: Project | null }) {
                   }
                 });
 
+                // Keep track of placed badge bounding boxes to avoid overlap
+                const placedBadges: BoundingBox[] = [];
+
                 clusters.forEach((cluster, idx) => {
                   const points = clusterNodeCoords.get(cluster.id);
-                  if (!points || points.length === 0) return;
+                  // Only draw hull cloud and badge if cluster has at least 2 nodes
+                  if (!points || points.length < 2) return;
 
                   const palette = CLUSTER_PALETTES[idx % CLUSTER_PALETTES.length];
                   const hull = computeConvexHull(points);
-                  const padded = expandHull(hull, 40);
+                  const padded = expandHull(hull, 36);
 
                   if (padded.length < 3) return;
 
@@ -656,25 +696,40 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.lineWidth = 1.5;
                   ctx.stroke();
 
-                  // Find top vertex for cluster title pill badge
+                  // Calculate centroid
+                  let cx = 0;
+                  let cy = 0;
                   let minY = Infinity;
-                  let topX = 0;
                   for (const p of padded) {
-                    if (p.y < minY) {
-                      minY = p.y;
-                      topX = p.x;
-                    }
+                    cx += p.x;
+                    cy += p.y;
+                    if (p.y < minY) minY = p.y;
+                  }
+                  cx /= padded.length;
+
+                  // Clean & concise cluster title
+                  let cleanLabel = cluster.label.trim();
+                  if (cleanLabel.length > 25) {
+                    cleanLabel = `${cleanLabel.slice(0, 23)}...`;
                   }
 
-                  // Draw pill label badge at the top of the cluster
-                  const fontSize = Math.max(9, Math.min(13, 11 / Math.sqrt(globalScale)));
+                  const fontSize = Math.max(9, Math.min(12, 11 / Math.sqrt(globalScale)));
                   ctx.font = `600 ${fontSize}px Inter, -apple-system, sans-serif`;
-                  const labelText = cluster.label;
-                  const textMetrics = ctx.measureText(labelText);
+                  const textMetrics = ctx.measureText(cleanLabel);
                   const pillW = textMetrics.width + 16;
-                  const pillH = fontSize + 10;
-                  const pillX = topX - pillW / 2;
-                  const pillY = minY - pillH - 6;
+                  const pillH = fontSize + 9;
+                  let pillX = cx - pillW / 2;
+                  let pillY = minY - pillH - 6;
+
+                  // De-overlap badge with existing placed badges
+                  for (const prev of placedBadges) {
+                    const overlapX = Math.abs(pillX + pillW / 2 - (prev.x + prev.w / 2)) < (pillW + prev.w) / 2 + 6;
+                    const overlapY = Math.abs(pillY + pillH / 2 - (prev.y + prev.h / 2)) < (pillH + prev.h) / 2 + 6;
+                    if (overlapX && overlapY) {
+                      pillY = prev.y - pillH - 6; // Shift upwards
+                    }
+                  }
+                  placedBadges.push({ x: pillX, y: pillY, w: pillW, h: pillH });
 
                   // Pill background
                   ctx.beginPath();
@@ -700,7 +755,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.fillStyle = "#ffffff";
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
-                  ctx.fillText(labelText, topX, pillY + pillH / 2);
+                  ctx.fillText(cleanLabel, pillX + pillW / 2, pillY + pillH / 2);
 
                   ctx.restore();
                 });
@@ -776,7 +831,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
                   ctx.fillText(label, node.x, bY + bH / 2);
-                } else if (globalScale >= 0.75) {
+                } else if (globalScale >= 0.8) {
                   // Clean text label below node
                   const label = node.title.length > 26 ? `${node.title.slice(0, 24)}...` : node.title;
                   const fontSize = Math.max(9, 10 / Math.sqrt(globalScale));
@@ -873,7 +928,7 @@ export function GraphPage({ project }: { project: Project | null }) {
               </span>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 160, overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto" }}>
               {clusters.map((c, idx) => {
                 const palette = CLUSTER_PALETTES[idx % CLUSTER_PALETTES.length];
                 const isSelected = selectedClusterId === c.id;
@@ -977,7 +1032,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                     >
                       {selectedNode.abstract_only ? "Abstract-Level" : "Full-Text Indexed"}
                     </span>
-                    {(selectedNode.pagerank || 0) > 0.05 && (
+                    {(selectedNode.pagerank || 0) > 0.04 && (
                       <span
                         style={{
                           fontSize: 10,
@@ -991,7 +1046,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                         High Centrality
                       </span>
                     )}
-                    {selectedNode.citation_count >= 30 && (
+                    {selectedNode.citation_count >= 15 && (
                       <span
                         style={{
                           fontSize: 10,

@@ -174,9 +174,15 @@ class EvolutionTransitionOut(BaseModel):
 
 
 class EvolutionOut(BaseModel):
-    citation_timeline: list[dict[str, Any]]
-    method_progression: list[dict[str, Any]]
-    finding_dynamics: list[dict[str, Any]]
+    citation_timeline: list[dict[str, Any]] = []
+    method_progression: list[dict[str, Any]] = []
+    finding_dynamics: list[dict[str, Any]] = []
+    phases: list[dict[str, Any]] = []
+    transitions: list[dict[str, Any]] = []
+    focus_trends: dict[str, Any] = {}
+    key_insights: list[str] = []
+    time_range: dict[str, Any] = {}
+    total_papers: int = 0
 
 
 # ==============================================================================

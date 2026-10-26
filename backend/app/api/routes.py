@@ -466,9 +466,15 @@ def get_evolution(
     evolution_service = EvolutionService()
     res = evolution_service.generate_evolution(db, project.id)
     return schemas.EvolutionOut(
-        citation_timeline=res["citation_timeline"],
-        method_progression=res["method_progression"],
-        finding_dynamics=res["finding_dynamics"],
+        citation_timeline=res.get("citation_timeline", []),
+        method_progression=res.get("method_progression", []),
+        finding_dynamics=res.get("finding_dynamics", []),
+        phases=res.get("phases", []),
+        transitions=res.get("transitions", []),
+        focus_trends=res.get("focus_trends", {}),
+        key_insights=res.get("key_insights", []),
+        time_range=res.get("time_range", {}),
+        total_papers=res.get("total_papers", 0),
     )
 
 

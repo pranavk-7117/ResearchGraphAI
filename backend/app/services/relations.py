@@ -20,7 +20,7 @@ class RelationsService:
         self,
         db: Session,
         project_id: int,
-        similarity_threshold: float = 0.65,
+        similarity_threshold: float = 0.52,
     ) -> list[models.PaperRelation]:
         """
         Derive both metadata citation edges and inferred semantic relations
@@ -142,48 +142,68 @@ class RelationsService:
 
         # Pairwise comparison
         paper_id_list = list(paper_embeddings.keys())
+        sim_scores_per_paper: dict[int, list[tuple[float, int]]] = {pid: [] for pid in paper_id_list}
+        pairwise_sims: list[tuple[float, int, int]] = []
+
         for i in range(len(paper_id_list)):
             for j in range(i + 1, len(paper_id_list)):
                 id_a = paper_id_list[i]
                 id_b = paper_id_list[j]
                 sim = cosine_similarity(paper_embeddings[id_a], paper_embeddings[id_b])
+                pairwise_sims.append((sim, id_a, id_b))
+                sim_scores_per_paper[id_a].append((sim, id_b))
+                sim_scores_per_paper[id_b].append((sim, id_a))
 
-                if sim >= similarity_threshold:
-                    # Check if already connected by citation
-                    existing_cite = (
-                        db.query(models.PaperRelation)
-                        .filter(
-                            models.PaperRelation.project_id == project_id,
-                            models.PaperRelation.source_id.in_([id_a, id_b]),
-                            models.PaperRelation.target_id.in_([id_a, id_b]),
-                            models.PaperRelation.relation_type == "cites",
-                        )
-                        .first()
-                    )
-                    if existing_cite:
-                        continue
+        # 1. Connect all pairs meeting similarity threshold
+        connected_pairs: set[tuple[int, int]] = set()
+        for sim, id_a, id_b in pairwise_sims:
+            if sim >= similarity_threshold:
+                connected_pairs.add((min(id_a, id_b), max(id_a, id_b)))
 
-                    existing_sim = (
-                        db.query(models.PaperRelation)
-                        .filter(
-                            models.PaperRelation.project_id == project_id,
-                            models.PaperRelation.source_id == id_a,
-                            models.PaperRelation.target_id == id_b,
-                            models.PaperRelation.relation_type == "similar",
-                        )
-                        .first()
-                    )
-                    if not existing_sim:
-                        rel = models.PaperRelation(
-                            project_id=project_id,
-                            source_id=id_a,
-                            target_id=id_b,
-                            relation_type="similar",
-                            basis="embedding_similarity",
-                            score=round(float(sim), 4),
-                        )
-                        db.add(rel)
-                        created_relations.append(rel)
+        # 2. Ensure every paper has at least top 2 peers connected if similarity >= 0.38
+        for pid, peer_sims in sim_scores_per_paper.items():
+            peer_sims.sort(key=lambda x: x[0], reverse=True)
+            for sim, peer_id in peer_sims[:2]:
+                if sim >= 0.38:
+                    connected_pairs.add((min(pid, peer_id), max(pid, peer_id)))
+
+        for id_a, id_b in connected_pairs:
+            # Check if already connected by citation
+            existing_cite = (
+                db.query(models.PaperRelation)
+                .filter(
+                    models.PaperRelation.project_id == project_id,
+                    models.PaperRelation.source_id.in_([id_a, id_b]),
+                    models.PaperRelation.target_id.in_([id_a, id_b]),
+                    models.PaperRelation.relation_type == "cites",
+                )
+                .first()
+            )
+            if existing_cite:
+                continue
+
+            existing_sim = (
+                db.query(models.PaperRelation)
+                .filter(
+                    models.PaperRelation.project_id == project_id,
+                    models.PaperRelation.source_id == id_a,
+                    models.PaperRelation.target_id == id_b,
+                    models.PaperRelation.relation_type == "similar",
+                )
+                .first()
+            )
+            if not existing_sim:
+                sim_val = cosine_similarity(paper_embeddings[id_a], paper_embeddings[id_b])
+                rel = models.PaperRelation(
+                    project_id=project_id,
+                    source_id=id_a,
+                    target_id=id_b,
+                    relation_type="similar",
+                    basis="embedding_similarity",
+                    score=round(float(sim_val), 4),
+                )
+                db.add(rel)
+                created_relations.append(rel)
 
         db.commit()
         return created_relations
