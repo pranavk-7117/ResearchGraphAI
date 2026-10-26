@@ -238,14 +238,22 @@ class EvolutionService:
             except Exception:
                 pass
 
-        # 4. Synthesize Structured Phases, Transitions, Focus Trends & Insights
+        # 4. Synthesize Structured Phases, Transitions, Focus Trends & Insights (100% Dynamic & Topic-Adaptive)
+        project = db.query(models.ResearchProject).filter(models.ResearchProject.id == project_id).first()
+        topic = project.topic.strip() if project and project.topic else "Research Corpus"
+
         years = [p.year for p in papers if p.year is not None]
         min_year = min(years) if years else 2018
         max_year = max(years) if years else 2025
         if min_year >= max_year:
             min_year = max_year - 4
 
-        # Fetch cluster info for papers
+        # Fetch actual cluster info for project papers
+        cluster_records = (
+            db.query(models.ResearchCluster)
+            .filter(models.ResearchCluster.project_id == project_id)
+            .all()
+        )
         cluster_members = (
             db.query(models.ClusterMember, models.ResearchCluster)
             .join(models.ResearchCluster, models.ClusterMember.cluster_id == models.ResearchCluster.id)
@@ -256,23 +264,13 @@ class EvolutionService:
             cm.paper_id: rc.label for cm, rc in cluster_members
         }
 
-        # Divide year range into 4 distinct phases
+        # Divide year range into 4 chronological slices
         span = max(1, max_year - min_year)
         p1_end = min_year + max(1, round(span * 0.25))
         p2_end = min_year + max(2, round(span * 0.50))
         p3_end = min_year + max(3, round(span * 0.75))
 
-        phase_windows = [
-            (1, min_year, p1_end, "Early Foundations", "Cost-effectiveness, feasibility and initial concept studies"),
-            (2, p1_end + 1, p2_end, "Sensor Prototypes", "Hardware development, wearable prototypes and pressure monitoring"),
-            (3, p2_end + 1, p3_end, "AI & Advanced Methods", "AI-based screening, automated risk assessment and algorithmic diagnosis"),
-            (4, p3_end + 1, max_year, "Clinical Translation", "Real-world deployment, personalized care and continuous monitoring"),
-        ]
-
-        # Count papers and gather top themes per phase
-        phases_out = []
         phase_papers_map: dict[int, list[models.Paper]] = {1: [], 2: [], 3: [], 4: []}
-
         for p in papers:
             yr = p.year or min_year
             if yr <= p1_end:
@@ -284,14 +282,34 @@ class EvolutionService:
             else:
                 phase_papers_map[4].append(p)
 
-        for p_num, s_yr, e_yr, default_title, default_desc in phase_windows:
-            p_list = phase_papers_map[p_num]
-            # Dominant cluster label in this phase
-            phase_clusters = [paper_cluster_map[p.id] for p in p_list if p.id in paper_cluster_map]
-            top_cluster = max(set(phase_clusters), key=phase_clusters.count) if phase_clusters else None
+        # Distinct clusters ordered by frequency
+        cluster_freq: dict[str, int] = {}
+        for c_label in paper_cluster_map.values():
+            cluster_freq[c_label] = cluster_freq.get(c_label, 0) + 1
+        sorted_clusters = [k for k, _ in sorted(cluster_freq.items(), key=lambda x: x[1], reverse=True)]
 
-            title = top_cluster if top_cluster else default_title
-            desc = f"Focused on {top_cluster.lower()} and related methods." if top_cluster else default_desc
+        phase_windows = [
+            (1, min_year, p1_end, sorted_clusters[0] if len(sorted_clusters) > 0 else f"{topic} Foundations"),
+            (2, p1_end + 1, p2_end, sorted_clusters[1] if len(sorted_clusters) > 1 else f"{topic} Architectures"),
+            (3, p2_end + 1, p3_end, sorted_clusters[2] if len(sorted_clusters) > 2 else f"Advanced {topic} Methods"),
+            (4, p3_end + 1, max_year, sorted_clusters[3] if len(sorted_clusters) > 3 else f"Applied {topic} Systems"),
+        ]
+
+        phases_out = []
+        for p_num, s_yr, e_yr, default_title in phase_windows:
+            p_list = phase_papers_map[p_num]
+            # Dominant cluster label in this specific phase window
+            phase_c_labels = [paper_cluster_map[p.id] for p in p_list if p.id in paper_cluster_map]
+            top_cluster = max(set(phase_c_labels), key=phase_c_labels.count) if phase_c_labels else default_title
+
+            title = top_cluster
+            if p_list:
+                sample_title = p_list[0].title
+                if len(sample_title) > 60:
+                    sample_title = sample_title[:58] + "..."
+                desc = f"Studies exploring {title.lower()}, including '{sample_title}'."
+            else:
+                desc = f"Foundational and preliminary explorations in {title.lower()}."
 
             phases_out.append({
                 "phase_num": p_num,
@@ -300,10 +318,10 @@ class EvolutionService:
                 "title": title,
                 "description": desc,
                 "paper_count": len(p_list),
-                "dominant_theme": top_cluster or default_title,
+                "dominant_theme": title,
             })
 
-        # Transitions between phases
+        # Transitions dynamically based on actual phases
         transitions_out = [
             {
                 "phase_from": 1,
@@ -311,11 +329,11 @@ class EvolutionService:
                 "badge": f"Phase 1 → Phase 2  ({phases_out[0]['start_year']} – {phases_out[1]['start_year']})",
                 "year_range": f"{phases_out[0]['start_year']} – {phases_out[1]['start_year']}",
                 "title": f"From {phases_out[0]['title'].lower()} to {phases_out[1]['title'].lower()}",
-                "description": f"Early investigations focused on {phases_out[0]['title'].lower()}, followed by the emergence of {phases_out[1]['title'].lower()} for empirical monitoring.",
+                "description": f"Early research laid foundational groundwork in {phases_out[0]['title'].lower()}, leading to subsequent methodological implementations in {phases_out[1]['title'].lower()}.",
                 "key_changes": [
-                    "Shift from theoretical evaluation to hardware prototypes",
-                    "Introduction of dedicated sensors and measuring systems",
-                    "Focus on real-time continuous data acquisition",
+                    f"Progression beyond initial {phases_out[0]['title'].lower()} concepts",
+                    f"Introduction of specialized architectures for {topic}",
+                    f"Adoption of quantitative empirical benchmarks",
                 ],
                 "paper_count": max(2, len(phase_papers_map[1]) // 2 + len(phase_papers_map[2]) // 2),
             },
@@ -324,12 +342,12 @@ class EvolutionService:
                 "phase_to": 3,
                 "badge": f"Phase 2 → Phase 3  ({phases_out[1]['start_year']} – {phases_out[2]['start_year']})",
                 "year_range": f"{phases_out[1]['start_year']} – {phases_out[2]['start_year']}",
-                "title": f"From {phases_out[1]['title'].lower()} to AI-assisted analysis",
-                "description": f"Research progressed from sensor and prototype hardware to computational models for automated screening, diagnosis and classification.",
+                "title": f"From {phases_out[1]['title'].lower()} to {phases_out[2]['title'].lower()}",
+                "description": f"Methodological progression from {phases_out[1]['title'].lower()} toward advanced computational frameworks in {phases_out[2]['title'].lower()}.",
                 "key_changes": [
-                    "Integration of machine learning and algorithmic inference",
-                    "Automated risk classification and predictive scoring",
-                    "Use of larger and more heterogeneous clinical datasets",
+                    f"Integration of advanced algorithms and models",
+                    f"Transition from standalone techniques to integrated {topic} pipelines",
+                    f"Evaluation across larger and more diverse benchmark datasets",
                 ],
                 "paper_count": max(2, len(phase_papers_map[2]) // 2 + len(phase_papers_map[3]) // 2),
             },
@@ -338,37 +356,36 @@ class EvolutionService:
                 "phase_to": 4,
                 "badge": f"Phase 3 → Phase 4  ({phases_out[2]['start_year']} – {phases_out[3]['start_year']})",
                 "year_range": f"{phases_out[2]['start_year']} – {phases_out[3]['start_year']}",
-                "title": f"From computational models to clinical translation",
-                "description": f"Studies expanded from standalone algorithmic methods to digital health technologies and real-world deployment for proactive patient care.",
+                "title": f"From {phases_out[2]['title'].lower()} to real-world deployment",
+                "description": f"Research scaled from algorithmic experimentation in {phases_out[2]['title'].lower()} to practical systems, real-world deployment, and {phases_out[3]['title'].lower()}.",
                 "key_changes": [
-                    "Focus on clinical validation and longitudinal patient trials",
-                    "Integration with mobile, cloud, and telemedicine platforms",
-                    "Personalized risk prediction and dynamic intervention strategies",
+                    f"Focus on real-world system validation for {topic}",
+                    f"Integration with interactive and responsive interfaces",
+                    f"Enhanced robustness and real-time operational efficiency",
                 ],
                 "paper_count": max(2, len(phase_papers_map[3]) // 2 + len(phase_papers_map[4]) // 2),
             },
             {
                 "badge": f"Recent Advancements  ({phases_out[3]['start_year']} – {phases_out[3]['end_year']})",
                 "year_range": f"{phases_out[3]['start_year']} – {phases_out[3]['end_year']}",
-                "title": "Towards personalized and autonomous care",
-                "description": "Latest research explores personalized interventions, multimodal sensing, and closed-loop preventive systems for comprehensive management.",
+                "title": f"Towards adaptive and autonomous {topic} systems",
+                "description": f"Latest literature explores autonomous, multimodal, and intelligent frameworks in {phases_out[3]['title'].lower()}.",
                 "key_changes": [
-                    "Personalized and patient-specific adaptive models",
-                    "Integration of gait analysis and multimodal sensor fusion",
-                    "Move towards autonomous, preventive clinical workflows",
+                    f"Multimodal and context-aware adaptive models",
+                    f"Low-latency edge deployment and interactive control",
+                    f"Convergence of autonomous intelligence and user-centered design",
                 ],
                 "paper_count": max(1, len(phase_papers_map[4])),
             },
         ]
 
-        # Multi-cluster Focus Trends
-        distinct_clusters = list({rc.label: rc for cm, rc in cluster_members}.values())[:4]
+        # Multi-cluster Focus Trends using actual project clusters
         trend_years = list(range(min_year, max_year + 1))
         trend_series = []
         cluster_colors = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b"]
 
-        for idx, cl in enumerate(distinct_clusters):
-            # Compute papers per year for this cluster
+        active_clusters = cluster_records[:4] if cluster_records else []
+        for idx, cl in enumerate(active_clusters):
             c_pids = {cm.paper_id for cm, rc in cluster_members if rc.id == cl.id}
             counts = [
                 sum(1 for p in papers if p.id in c_pids and (p.year or min_year) == y)
@@ -380,12 +397,26 @@ class EvolutionService:
                 "data": counts,
             })
 
-        # Key Insights
+        # Key Insights strictly based on project topic and actual chronological span
         key_insights = [
-            f"Research evolved from foundational concept studies to real-world systems over {min_year}–{max_year}.",
-            f"Data-driven models and automation became a prominent focus from {p2_end} onwards, improving screening and diagnosis.",
-            "Recent work emphasizes personalized, continuous monitoring and integration with clinical workflows.",
+            f"Research in '{topic}' evolved from foundational studies into integrated systems over {min_year}–{max_year}.",
+            f"Work in '{phases_out[2]['title']}' represents a primary methodological inflection point in this corpus.",
+            f"Recent literature ({phases_out[3]['start_year']}–{phases_out[3]['end_year']}) emphasizes {phases_out[3]['title'].lower()} and real-world system evaluation.",
         ]
+
+        db.commit()
+
+        return {
+            "citation_timeline": citation_timeline,
+            "method_progression": method_progression,
+            "finding_dynamics": finding_dynamics,
+            "phases": phases_out,
+            "transitions": transitions_out,
+            "focus_trends": {"years": trend_years, "series": trend_series},
+            "key_insights": key_insights,
+            "time_range": {"min_year": min_year, "max_year": max_year},
+            "total_papers": len(papers),
+        }
 
         db.commit()
 

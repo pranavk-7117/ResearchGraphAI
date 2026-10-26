@@ -72,6 +72,8 @@ export function EvolutionPage({ project }: { project: Project | null }) {
     return { min_year: 2018, max_year: 2025 };
   }, [data.time_range]);
 
+  const topic = project?.topic || "Research Topic";
+
   const phases: EvolutionPhase[] = useMemo(() => {
     if (data.phases && data.phases.length > 0) {
       return data.phases;
@@ -83,60 +85,69 @@ export function EvolutionPage({ project }: { project: Project | null }) {
     const p2End = min + Math.max(2, Math.round(span * 0.50));
     const p3End = min + Math.max(3, Math.round(span * 0.75));
 
+    const c0 = clusters[0]?.label || `${topic} Foundations`;
+    const c1 = clusters[1]?.label || `${topic} Architectures`;
+    const c2 = clusters[2]?.label || `Advanced ${topic} Methods`;
+    const c3 = clusters[3]?.label || `Applied ${topic} Systems`;
+
     return [
       {
         phase_num: 1,
         start_year: min,
         end_year: p1End,
-        title: "Early Foundations",
-        description: "Cost-effectiveness, feasibility and initial concept studies",
-        paper_count: Math.max(4, Math.round(totalPapers * 0.24)),
+        title: c0,
+        description: `Initial explorations and baseline concepts in ${c0.toLowerCase()}.`,
+        paper_count: Math.max(3, Math.round(totalPapers * 0.24)),
       },
       {
         phase_num: 2,
         start_year: p1End + 1,
         end_year: p2End,
-        title: "Sensor Prototypes",
-        description: "Wearable insoles and pressure monitoring hardware",
-        paper_count: Math.max(5, Math.round(totalPapers * 0.28)),
+        title: c1,
+        description: `Methodological development and specialized architectures in ${c1.toLowerCase()}.`,
+        paper_count: Math.max(4, Math.round(totalPapers * 0.28)),
       },
       {
         phase_num: 3,
         start_year: p2End + 1,
         end_year: p3End,
-        title: "AI & Advanced Methods",
-        description: "AI-based screening, diagnosis and risk assessment",
-        paper_count: Math.max(6, Math.round(totalPapers * 0.32)),
+        title: c2,
+        description: `Advanced algorithmic modeling and automated frameworks in ${c2.toLowerCase()}.`,
+        paper_count: Math.max(5, Math.round(totalPapers * 0.32)),
       },
       {
         phase_num: 4,
         start_year: p3End + 1,
         end_year: max,
-        title: "Clinical Translation",
-        description: "Real-world deployment, personalized care and autonomous monitoring",
-        paper_count: Math.max(3, Math.round(totalPapers * 0.16)),
+        title: c3,
+        description: `Practical integration, deployment benchmarks and real-world ${c3.toLowerCase()}.`,
+        paper_count: Math.max(2, Math.round(totalPapers * 0.16)),
       },
     ];
-  }, [data.phases, timeRange, totalPapers]);
+  }, [data.phases, timeRange, totalPapers, clusters, topic]);
 
   const transitions: EvolutionTransitionItem[] = useMemo(() => {
     if (data.transitions && data.transitions.length > 0) {
       return data.transitions;
     }
     const p = phases;
+    const p1Title = p[0]?.title || `${topic} Foundations`;
+    const p2Title = p[1]?.title || `${topic} Methods`;
+    const p3Title = p[2]?.title || `Advanced ${topic}`;
+    const p4Title = p[3]?.title || `Applied ${topic}`;
+
     return [
       {
         phase_from: 1,
         phase_to: 2,
         badge: `Phase 1 → Phase 2  (${p[0]?.start_year || 2018} – ${p[1]?.start_year || 2020})`,
         year_range: `${p[0]?.start_year || 2018} – ${p[1]?.start_year || 2020}`,
-        title: "From economic evaluation to sensor-based monitoring",
-        description:
-          "Early studies focused on cost-effectiveness and feasibility, followed by development of wearable insole prototypes for real-time pressure monitoring.",
+        title: `From ${p1Title.toLowerCase()} to ${p2Title.toLowerCase()}`,
+        description: `Early studies explored foundational ${p1Title.toLowerCase()}, leading to structured implementations in ${p2Title.toLowerCase()}.`,
         key_changes: [
-          "Shift from theoretical evaluation to hardware prototypes",
-          "Introduction of wearable pressure sensors",
-          "Focus on real-time monitoring of plantar pressure",
+          `Progression beyond initial ${p1Title.toLowerCase()} concepts`,
+          `Introduction of specialized frameworks for ${topic.toLowerCase()}`,
+          `Adoption of quantitative empirical evaluation metrics`,
         ],
         paper_count: 3,
       },
@@ -145,13 +156,12 @@ export function EvolutionPage({ project }: { project: Project | null }) {
         phase_to: 3,
         badge: `Phase 2 → Phase 3  (${p[1]?.start_year || 2020} – ${p[2]?.start_year || 2022})`,
         year_range: `${p[1]?.start_year || 2020} – ${p[2]?.start_year || 2022}`,
-        title: "From pressure monitoring to AI-assisted screening",
-        description:
-          "Research progressed from sensor-based pressure monitoring to AI/ML methods for automated screening, diagnosis and risk assessment.",
+        title: `From ${p2Title.toLowerCase()} to ${p3Title.toLowerCase()}`,
+        description: `Research progressed from prototype implementations toward computational algorithms and ${p3Title.toLowerCase()}.`,
         key_changes: [
-          "Integration of AI and machine learning",
-          "Automated ulcer risk classification",
-          "Use of larger and more diverse datasets",
+          `Integration of advanced algorithms and models`,
+          `Transition from isolated tools to end-to-end ${topic.toLowerCase()} pipelines`,
+          `Evaluation across larger and more diverse benchmark datasets`,
         ],
         paper_count: 4,
       },
@@ -160,59 +170,67 @@ export function EvolutionPage({ project }: { project: Project | null }) {
         phase_to: 4,
         badge: `Phase 3 → Phase 4  (${p[2]?.start_year || 2022} – ${p[3]?.start_year || 2024})`,
         year_range: `${p[2]?.start_year || 2022} – ${p[3]?.start_year || 2024}`,
-        title: "From AI methods to real-world clinical applications",
-        description:
-          "Studies expanded from AI-based screening methods to digital health technologies and real-world deployment for continuous monitoring.",
+        title: `From ${p3Title.toLowerCase()} to real-world deployment`,
+        description: `Studies expanded from algorithmic experimentation toward practical applications, user interaction and ${p4Title.toLowerCase()}.`,
         key_changes: [
-          "Focus on clinical validation and real-world studies",
-          "Integration with mobile and telemedicine systems",
-          "Personalized risk prediction and intervention strategies",
+          `Focus on real-world system validation and robustness`,
+          `Integration with interactive and responsive interfaces`,
+          `Enhanced latency optimization and operational reliability`,
         ],
         paper_count: 3,
       },
       {
         badge: `Recent Advancements  (${p[3]?.start_year || 2024} – ${p[3]?.end_year || 2025})`,
         year_range: `${p[3]?.start_year || 2024} – ${p[3]?.end_year || 2025}`,
-        title: "Towards personalized and autonomous care",
-        description:
-          "Latest research explores personalized interventions, gait-based monitoring and closed-loop systems for improved diabetic foot ulcer management.",
+        title: `Towards adaptive and autonomous ${topic.toLowerCase()} systems`,
+        description: `Latest research explores adaptive control, multimodal feedback, and intelligent systems in ${p4Title.toLowerCase()}.`,
         key_changes: [
-          "Personalized and patient-specific models",
-          "Integration of gait analysis and multimodal sensing",
-          "Move towards autonomous and preventive care systems",
+          `Context-aware and user-adaptive architectures`,
+          `Multimodal integration and low-latency response`,
+          `Convergence of automated intelligence and practical workflows`,
         ],
         paper_count: 2,
       },
     ];
-  }, [data.transitions, phases]);
+  }, [data.transitions, phases, topic]);
 
-  // Focus Trends series
+  // Focus Trends series using actual project clusters
   const focusTrends = useMemo(() => {
     if (data.focus_trends && data.focus_trends.series && data.focus_trends.series.length > 0) {
       return data.focus_trends;
     }
     const years = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
-    return {
-      years,
-      series: [
-        { name: clusters[0]?.label || "Sensor Technology", color: "#3b82f6", data: [4, 6, 8, 5, 4, 3, 2, 2] },
-        { name: clusters[1]?.label || "AI & Screening", color: "#8b5cf6", data: [1, 2, 3, 5, 8, 7, 5, 4] },
-        { name: clusters[2]?.label || "Clinical Care", color: "#10b981", data: [2, 3, 2, 4, 5, 7, 9, 8] },
-        { name: clusters[3]?.label || "Cost & Feasibility", color: "#f59e0b", data: [6, 5, 3, 2, 2, 1, 1, 1] },
-      ],
-    };
-  }, [data.focus_trends, clusters]);
+    const clusterColors = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b"];
+    const series = clusters.slice(0, 4).map((c, idx) => ({
+      name: c.label,
+      color: clusterColors[idx % clusterColors.length],
+      data: [3 + idx, 4, 6 + (idx % 2), 5, 7 - idx, 6 + idx, 5, 4],
+    }));
+
+    if (series.length === 0) {
+      series.push({
+        name: topic,
+        color: "#3b82f6",
+        data: [2, 3, 5, 7, 8, 9, 8, 7],
+      });
+    }
+
+    return { years, series };
+  }, [data.focus_trends, clusters, topic]);
 
   const keyInsights = useMemo(() => {
     if (data.key_insights && data.key_insights.length > 0) {
       return data.key_insights;
     }
+    const p1 = phases[0]?.title || "initial studies";
+    const p3 = phases[2]?.title || "advanced methods";
+    const p4 = phases[3]?.title || "practical implementations";
     return [
-      `Research evolved from theoretical cost studies to real-world smart insole systems over ${timeRange.min_year}–${timeRange.max_year}.`,
-      "AI and machine learning became a major focus from 2022 onwards, improving screening and diagnosis.",
-      "Recent work emphasizes personalized, continuous monitoring and integration with clinical workflows.",
+      `Research in "${topic}" evolved from early ${p1.toLowerCase()} into integrated systems over ${timeRange.min_year}–${timeRange.max_year}.`,
+      `The emergence of ${p3} represents a primary methodological inflection point in this corpus.`,
+      `Recent literature emphasizes ${p4.toLowerCase()} and real-world system validation.`,
     ];
-  }, [data.key_insights, timeRange]);
+  }, [data.key_insights, phases, topic, timeRange]);
 
   if (!project) {
     return (

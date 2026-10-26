@@ -122,18 +122,29 @@ function expandHull(hull: Point[], padding = 42): Point[] {
 
 function useElementSize<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
-  const [size, setSize] = useState({ width: 900, height: 650 });
+  const [size, setSize] = useState({ width: 700, height: 600 });
 
   useEffect(() => {
     if (!ref.current) return;
-    const observer = new ResizeObserver(([entry]) => {
-      setSize({
-        width: Math.max(320, entry.contentRect.width),
-        height: Math.max(420, entry.contentRect.height),
-      });
-    });
+    const updateSize = () => {
+      if (!ref.current) return;
+      const rect = ref.current.getBoundingClientRect();
+      if (rect.width > 50 && rect.height > 50) {
+        setSize({
+          width: Math.floor(rect.width),
+          height: Math.floor(rect.height),
+        });
+      }
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(() => updateSize());
     observer.observe(ref.current);
-    return () => observer.disconnect();
+    window.addEventListener("resize", updateSize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
   }, []);
 
   return { ref, size };
@@ -190,18 +201,21 @@ export function GraphPage({ project }: { project: Project | null }) {
     }
   }
 
-  // Adjust d3 force parameters for clean spacing without clumping
+  // Adjust d3 force parameters for clean spacing without excessive repulsion
   useEffect(() => {
     if (!graphRef.current) return;
-    // Strong repulsion to prevent nodes from clustering into a dense clump
     const charge = graphRef.current.d3Force("charge");
     if (charge) {
-      charge.strength(-380);
+      charge.strength(-110);
     }
     const link = graphRef.current.d3Force("link");
     if (link) {
-      link.distance(85);
+      link.distance(60);
     }
+    const timer = setTimeout(() => {
+      graphRef.current?.zoomToFit(400, 35);
+    }, 400);
+    return () => clearTimeout(timer);
   }, [graphData.nodes.length]);
 
   // Filtered nodes and edges
@@ -318,11 +332,11 @@ export function GraphPage({ project }: { project: Project | null }) {
   // Compute node size
   const getNodeVal = (node: any) => {
     if (nodeSizeMode === "citations") {
-      return Math.max(5, Math.min(22, 5 + Math.log2((node.citation_count || 0) + 1) * 2.2));
+      return Math.max(8, Math.min(24, 8 + Math.log2((node.citation_count || 0) + 1) * 2.5));
     } else if (nodeSizeMode === "pagerank") {
-      return Math.max(5, Math.min(22, 5 + (node.pagerank || 0) * 110));
+      return Math.max(8, Math.min(24, 8 + (node.pagerank || 0) * 110));
     }
-    return 7;
+    return 9;
   };
 
   // Connected papers to selected node
@@ -612,11 +626,13 @@ export function GraphPage({ project }: { project: Project | null }) {
       )}
 
       {/* Main 2-Column Canvas + Inspector Layout */}
-      <div style={{ flex: 1, display: "flex", gap: 12, minHeight: 0 }}>
+      <div style={{ flex: 1, display: "flex", gap: 12, minHeight: 0, width: "100%", overflow: "hidden" }}>
         {/* Left: Interactive Canvas */}
         <div
           style={{
-            flex: 1,
+            flex: "1 1 0%",
+            minWidth: 0,
+            minHeight: 0,
             position: "relative",
             border: "1px solid #e2e8f0",
             borderRadius: 8,
@@ -666,7 +682,7 @@ export function GraphPage({ project }: { project: Project | null }) {
 
                   const palette = CLUSTER_PALETTES[idx % CLUSTER_PALETTES.length];
                   const hull = computeConvexHull(points);
-                  const padded = expandHull(hull, 36);
+                  const padded = expandHull(hull, 26);
 
                   if (padded.length < 3) return;
 
@@ -831,7 +847,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
                   ctx.fillText(label, node.x, bY + bH / 2);
-                } else if (globalScale >= 0.8) {
+                } else if (globalScale >= 0.35) {
                   // Clean text label below node
                   const label = node.title.length > 26 ? `${node.title.slice(0, 24)}...` : node.title;
                   const fontSize = Math.max(9, 10 / Math.sqrt(globalScale));
@@ -892,6 +908,9 @@ export function GraphPage({ project }: { project: Project | null }) {
         <aside
           style={{
             width: 340,
+            minWidth: 340,
+            maxWidth: 340,
+            flexShrink: 0,
             display: "flex",
             flexDirection: "column",
             gap: 12,
