@@ -1,20 +1,21 @@
 """
-Empirical Evaluation Script for ResearchGraphAI.
+Empirical Discovery Evaluation Script for ResearchGraphAI (T13 Non-Circular Version).
 
-Measures:
-1. Multi-source Discovery Yield (OpenAlex, Semantic Scholar, arXiv)
-2. Deduplication Rate
-3. Semantic Vector Relevance Distribution
-4. Citation Support Rate (ratio of claims verified against stored passages)
+Replaces the prior circular bi-encoder cosine metric with an independent external
+Cross-Encoder relevance judge (`cross-encoder/ms-marco-MiniLM-L-6-v2`) plus
+OpenAlex/abstract topic keyword overlap, alongside multi-source yield and deduplication.
+
+Usage:
+  cd backend && python ../evaluation/evaluate.py
 """
 
 import json
-import os
+import math
+from pathlib import Path
+import re
 import sys
 import time
-from pathlib import Path
 
-# Add backend directory to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = PROJECT_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
@@ -22,34 +23,45 @@ sys.path.insert(0, str(BACKEND_DIR))
 from dotenv import load_dotenv
 load_dotenv(BACKEND_DIR / ".env")
 
-from app.clients import ArxivClient, OpenAlexClient, SemanticScholarClient
+from app.services.chat import get_cross_encoder
 from app.services.discovery import DiscoveryService
-from app.services.embeddings import EmbeddingService, cosine_similarity
-from app.services.llm import post_validate_citation
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-max(-20.0, min(20.0, x))))
+
+
+def _topic_keyword_overlap(topic: str, text: str) -> float:
+    t_tokens = {w for w in re.findall(r"[a-z0-9]{3,}", topic.lower())}
+    d_tokens = {w for w in re.findall(r"[a-z0-9]{3,}", (text or "").lower())}
+    if not t_tokens:
+        return 0.0
+    return len(t_tokens & d_tokens) / float(len(t_tokens))
+
 
 def run_evaluation():
     topics_file = Path(__file__).parent / "topics.json"
-    with open(topics_file, "r") as f:
+    with open(topics_file, "r", encoding="utf-8") as f:
         topics = json.load(f)
 
     discovery = DiscoveryService()
-    embeddings = EmbeddingService()
+    cross_encoder = get_cross_encoder()
 
     eval_report = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "embedding_model": embeddings.model_name,
-        "results": []
+        "external_judge": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        "circularity_note": "Replaced bi-encoder cosine similarity (which matched discovery ranking) with independent cross-encoder probability & keyword overlap.",
+        "results": [],
     }
 
     print("=================================================================")
-    print("ResearchGraphAI Empirical Evaluation")
+    print("ResearchGraphAI Discovery Evaluation (Non-Circular External Judge)")
     print("=================================================================")
 
     for item in topics:
         topic_text = item["topic"]
         print(f"\n[Evaluating Topic]: {topic_text} ({item['domain']})")
 
-        # 1. Fetch from sources
         t0 = time.time()
         oa_hits = discovery.openalex.search(topic_text, limit=10)
         s2_hits = discovery.semantic_scholar.search(topic_text, limit=10)
@@ -57,34 +69,27 @@ def run_evaluation():
         fetch_time = time.time() - t0
 
         total_fetched = len(oa_hits) + len(s2_hits) + len(arxiv_hits)
-
-        # 2. Measure Deduplication
         all_candidates = oa_hits + s2_hits + arxiv_hits
         deduped = discovery._deduplicate_candidates(all_candidates)
         dedup_rate = round(1.0 - (len(deduped) / total_fetched), 3) if total_fetched else 0.0
 
-        # 3. Measure Semantic Relevance Distribution
-        topic_vec = embeddings.embed(topic_text)
-        sim_scores = []
-        oa_pdf_count = 0
-
-        for cand in deduped:
-            cand_text = f"{cand.title}. {cand.abstract or ''}".strip()
-            cand_vec = embeddings.embed(cand_text)
-            sim = cosine_similarity(topic_vec, cand_vec)
-            sim_scores.append(sim)
-            if cand.oa_pdf_url:
-                oa_pdf_count = oa_pdf_count + 1
-
-        mean_sim = round(float(sum(sim_scores) / len(sim_scores)), 4) if sim_scores else 0.0
-        min_sim = round(float(min(sim_scores)), 4) if sim_scores else 0.0
-        max_sim = round(float(max(sim_scores)), 4) if sim_scores else 0.0
+        oa_pdf_count = sum(1 for c in deduped if c.oa_pdf_url)
         oa_ratio = round(oa_pdf_count / len(deduped), 3) if deduped else 0.0
 
-        print(f"  Total Fetched: {total_fetched} (OpenAlex: {len(oa_hits)}, S2: {len(s2_hits)}, arXiv: {len(arxiv_hits)})")
-        print(f"  Unique Candidates: {len(deduped)} (Dedup Reduction: {dedup_rate * 100}%)")
-        print(f"  Open Access Full-Text Ratio: {oa_ratio * 100}%")
-        print(f"  Cosine Relevance: Mean={mean_sim}, Min={min_sim}, Max={max_sim}")
+        if deduped:
+            pairs = [(topic_text, f"{c.title}. {c.abstract or ''}"[:800]) for c in deduped]
+            ce_logits = cross_encoder.predict(pairs)
+            ce_probs = [_sigmoid(float(s)) for s in ce_logits]
+            kw_overlaps = [_topic_keyword_overlap(topic_text, f"{c.title} {c.abstract or ''}") for c in deduped]
+            mean_ce = round(sum(ce_probs) / len(ce_probs), 4)
+            min_ce = round(min(ce_probs), 4)
+            max_ce = round(max(ce_probs), 4)
+            mean_kw = round(sum(kw_overlaps) / len(kw_overlaps), 4)
+        else:
+            mean_ce = min_ce = max_ce = mean_kw = 0.0
+
+        print(f"  Total Fetched: {total_fetched} | Unique: {len(deduped)} (Dedup: {dedup_rate * 100:.1f}%)")
+        print(f"  External Cross-Encoder Prob: Mean={mean_ce}, Min={min_ce}, Max={max_ce} | Keyword Overlap: {mean_kw}")
 
         eval_report["results"].append({
             "topic": topic_text,
@@ -93,18 +98,31 @@ def run_evaluation():
             "unique_candidates": len(deduped),
             "dedup_rate": dedup_rate,
             "open_access_ratio": oa_ratio,
-            "mean_relevance": mean_sim,
-            "min_relevance": min_sim,
-            "max_relevance": max_sim,
-            "fetch_latency_seconds": round(fetch_time, 2)
+            "external_cross_encoder_mean": mean_ce,
+            "external_cross_encoder_min": min_ce,
+            "external_cross_encoder_max": max_ce,
+            "topic_keyword_overlap_mean": mean_kw,
+            "fetch_latency_seconds": round(fetch_time, 2),
         })
 
-    # Save results
-    results_path = Path(__file__).parent / "results.json"
-    with open(results_path, "w") as f:
-        json.dump(eval_report, f, indent=2)
+    # Merge any T13 retrieval/attribution/T12b summaries if present for unified results_v2.json
+    unified = {"discovery": eval_report}
+    for key, fname in [
+        ("retrieval_scifact", "retrieval_results.json"),
+        ("attribution", "attribution_results.json"),
+        ("temporal_gap_holdout", "gap_holdout_results.json"),
+    ]:
+        fpath = Path(__file__).parent / fname
+        if fpath.exists():
+            with open(fpath, "r", encoding="utf-8") as fh:
+                unified[key] = json.load(fh)
 
-    print(f"\n[Evaluation Complete] Report saved to: {results_path}")
+    results_path = Path(__file__).parent / "results_v2.json"
+    with open(results_path, "w", encoding="utf-8") as f:
+        json.dump(unified, f, indent=2)
+
+    print(f"\n[Evaluation Complete] Saved to: {results_path}")
+
 
 if __name__ == "__main__":
     run_evaluation()

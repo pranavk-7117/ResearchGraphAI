@@ -187,6 +187,14 @@ class LLMService:
                         headers=headers,
                         json=payload,
                     )
+                    if resp.status_code == 429:
+                        import time as _t
+                        _t.sleep(2.5)
+                        resp = client.post(
+                            "https://api.groq.com/openai/v1/chat/completions",
+                            headers=headers,
+                            json=payload,
+                        )
                     if resp.status_code == 200:
                         data = resp.json()
                         self.groq_model = model_name

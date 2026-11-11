@@ -137,7 +137,7 @@ class ChatService:
     ):
         self.embeddings = EmbeddingService()
         self.llm = LLMService()
-        self.fusion_method = (fusion_method or os.getenv("RETRIEVAL_FUSION", "rrf")).lower().strip()
+        self.fusion_method = (fusion_method or os.getenv("RETRIEVAL_FUSION", "convex")).lower().strip()
         self.alpha = float(alpha if alpha is not None else os.getenv("RETRIEVAL_ALPHA", "0.5"))
         self.reranker = (reranker or os.getenv("RERANKER", "none")).lower().strip()
         self.min_dense_similarity = float(

@@ -1,0 +1,73 @@
+{
+  "corpus_passages": 20,
+  "domain_questions": 30,
+  "total_quotes_extracted": 65,
+  "verified_quotes": 59,
+  "quote_verification_precision": 0.9077,
+  "answers_with_at_least_one_verified_quote_rate": 1.0,
+  "off_topic_questions": 10,
+  "off_topic_refusal_rate": 0.9,
+  "elapsed_seconds": 143.54,
+  "samples": [
+    {
+      "question": "What main methodology or mechanism is studied for perovskite solar cell degradation mechanisms?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "What experimental metrics or quantitative findings are reported in perovskite solar cell degradation mechanisms?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "What limitations or challenges are identified in perovskite solar cell degradation mechanisms?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "How do recent studies evaluate perovskite solar cell degradation mechanisms?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "What factors drive performance or stability in perovskite solar cell degradation mechanisms?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "What key datasets, models, or conditions are investigated in perovskite solar cell degradation mechanisms?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "What main methodology or mechanism is studied for retrieval augmented generation attribution benchmarks?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 1
+    },
+    {
+      "question": "What experimental metrics or quantitative findings are reported in retrieval augmented generation attribution benchmarks?",
+      "retrieved": 3,
+      "quotes": 3,
+      "verified": 3
+    },
+    {
+      "question": "What limitations or challenges are identified in retrieval augmented generation attribution benchmarks?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    },
+    {
+      "question": "How do recent studies evaluate retrieval augmented generation attribution benchmarks?",
+      "retrieved": 3,
+      "quotes": 2,
+      "verified": 2
+    }
+  ]
+}
