@@ -12,6 +12,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    Computed,
     DateTime,
     Float,
     ForeignKey,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -207,6 +208,11 @@ class PaperChunk(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(100), default="all-MiniLM-L6-v2")
     embedding_version: Mapped[str] = mapped_column(String(50), default="1.0")
+    text_tsv: Mapped[Any] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', COALESCE(text, ''))", persisted=True),
+        nullable=True,
+    )
 
     paper: Mapped["Paper"] = relationship(back_populates="chunks")
 

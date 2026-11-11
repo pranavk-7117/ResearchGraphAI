@@ -6,7 +6,7 @@
 - [x] **T0. Reset documentation state**
   - Rewrite `PROGRESS.md` to the new Phase A–E checklist.
   - Align `README.md` test count with real `pytest` collection count.
-- [ ] **T1. Make chat retrieval actually hybrid** (`backend/app/services/chat.py`, new migration)
+- [x] **T1. Make chat retrieval actually hybrid** (`backend/app/services/chat.py`, new migration)
 - [ ] **T2. Fix the Evolution service** (`backend/app/services/evolution.py`, `backend/app/services/constants.py`)
 - [ ] **T3. Strict quote verification** (`backend/app/services/llm.py`, `facts_extraction.py`, `gaps.py`)
 - [ ] **T4. Correct graph construction and PageRank** (`relations.py`, `research_graph.py`, `routes.py`, `clustering.py`)
@@ -53,3 +53,8 @@
 - **Changed**: Rewrote `PROGRESS.md` to the Phase A–E checklist with zero references to legacy architecture; updated `README.md` test count from 15 to 19 (19 collected tests).
 - **Tests**: `python -m pytest tests/ -v`: 19 passed in 39.29s against live Supabase Postgres.
 - **Acceptance**: `Select-String` on `PROGRESS.md` for legacy terms returned 0 matches. **PASS**.
+
+### T1 — Make chat retrieval actually hybrid
+- **Changed**: Added Alembic migration `a1b2c3d4e501_t1_hybrid_fts_gin.py` (generated `tsvector` column `text_tsv` on `paper_chunks`, GIN index `ix_paper_chunks_text_tsv_gin`, GIN index `ix_papers_title_abstract_tsv_gin`); updated `PaperChunk` in `models.py`; rewrote `ChatService._hybrid_retrieve` in `services/chat.py` with pgvector `<=>` (top 30), `websearch_to_tsquery` + `ts_rank_cd` (top 30), `RETRIEVAL_FUSION=rrf|convex` (`alpha=0.5`), optional `RERANKER=none|cross_encoder`, and strict no-evidence threshold guard (removed score-0 abstract fallback).
+- **Tests**: `python -m pytest tests/ -q` (`backend/`): 23 passed (including dense-only, keyword-only, RRF & convex ordering, no-evidence guard, and live DB isolation).
+- **Acceptance**: `alembic upgrade head` / `downgrade -1` / `upgrade head` succeeded; `EXPLAIN` output: `Bitmap Heap Scan on paper_chunks -> Bitmap Index Scan on ix_paper_chunks_text_tsv_gin (cost=0.00..9.92 rows=1 width=0)`. **PASS**.
