@@ -20,6 +20,9 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import AuthenticatedUser, get_current_user, verify_project_ownership
 from app.database import get_db
+from app.dm.partial_order import transitive_closure, transitive_reduction
+from app.dm.reading_path import compute_reading_path
+from app.dsa.graph import Graph as DSAGraph, has_cycle
 from app.dsa.trie import Trie
 from app.services.chat import ChatService
 from app.services.clustering import ClusteringService
@@ -434,6 +437,106 @@ def autocomplete_papers(
             if isinstance(a, dict) and a.get("name"):
                 trie.insert(a["name"], {"type": "author", "paper_id": pid, "title": title, "year": year})
     return {"query": q, "results": trie.search_prefix(q, limit=limit)}
+
+
+def _build_citation_dsa_dag(db: Session, project_id: int) -> tuple[DSAGraph, dict[int, models.Paper]]:
+    """Build an acyclic hand-built DSAGraph over project citation edges."""
+    entries = (
+        db.query(models.ProjectPaper, models.Paper)
+        .join(models.Paper, models.ProjectPaper.paper_id == models.Paper.id)
+        .filter(models.ProjectPaper.project_id == project_id)
+        .all()
+    )
+    paper_map = {paper.id: paper for _pp, paper in entries}
+    dag = DSAGraph(directed=True)
+    for pid, paper in paper_map.items():
+        dag.add_node(pid, title=paper.title, year=paper.year)
+
+    cites = (
+        db.query(models.PaperRelation)
+        .filter(
+            models.PaperRelation.project_id == project_id,
+            models.PaperRelation.relation_type == "cites",
+        )
+        .all()
+    )
+    for rel in cites:
+        if rel.source_id == rel.target_id or rel.source_id not in paper_map or rel.target_id not in paper_map:
+            continue
+        dag.add_edge(rel.source_id, rel.target_id, weight=rel.score)
+        if has_cycle(dag):
+            dag._adj[rel.source_id].pop(rel.target_id, None)
+    return dag, paper_map
+
+
+@router.get("/projects/{project_id}/hasse")
+def get_hasse_diagram(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Compute transitive reduction (Hasse diagram) and transitive closure over citation DAG."""
+    project = verify_project_ownership(project_id, user, db)
+    dag, paper_map = _build_citation_dsa_dag(db, project.id)
+    hasse = transitive_reduction(dag)
+    closure = transitive_closure(dag)
+
+    hasse_edges = [{"from": u, "to": v} for u, v, _ in hasse.edges()]
+    original_edges = {(u, v) for u, v, _ in dag.edges()}
+    reduced_set = {(e["from"], e["to"]) for e in hasse_edges}
+    redundant_edges = [{"from": u, "to": v} for (u, v) in sorted(original_edges - reduced_set)]
+
+    return {
+        "project_id": project.id,
+        "node_count": len(paper_map),
+        "citation_edge_count": len(original_edges),
+        "hasse_edge_count": len(hasse_edges),
+        "closure_edge_count": len(closure.edges()),
+        "hasse_edges": hasse_edges,
+        "redundant_edges_removed": redundant_edges,
+    }
+
+
+@router.get("/projects/{project_id}/reading-path")
+def get_reading_path(
+    project_id: int,
+    paper_id: int = Query(..., description="Target paper ID"),
+    n: int = Query(10, ge=1, le=50),
+    max_hops: int = Query(3, ge=1, le=6),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return topological prerequisite reading path for target paper, ranked by citation-DAG PageRank."""
+    project = verify_project_ownership(project_id, user, db)
+    dag, paper_map = _build_citation_dsa_dag(db, project.id)
+    if paper_id not in paper_map:
+        raise HTTPException(status_code=404, detail=f"Paper {paper_id} not in project {project.id}")
+
+    from app.services.research_graph import NetworkXGraphService
+    G = NetworkXGraphService.build_project_graph(db, project.id)
+    analytics = NetworkXGraphService.analyze_graph(
+        G, db=db, project_id=project.id, corpus_version=project.corpus_version
+    )
+    pagerank = analytics.get("pagerank", {})
+
+    steps = compute_reading_path(
+        dag, target_paper_id=paper_id, pagerank=pagerank, max_hops=max_hops, max_papers=n
+    )
+    enriched = []
+    for s in steps:
+        p = paper_map.get(s["paper_id"])
+        enriched.append({
+            **s,
+            "title": p.title if p else None,
+            "year": p.year if p else None,
+            "doi": p.doi if p else None,
+        })
+    return {
+        "project_id": project.id,
+        "target_paper_id": paper_id,
+        "target_title": paper_map[paper_id].title,
+        "steps": enriched,
+    }
 
 
 # ==============================================================================

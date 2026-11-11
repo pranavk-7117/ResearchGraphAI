@@ -14,7 +14,7 @@
 
 ### PHASE B — Hand-built Data Structures and Discrete Math
 - [x] **T6. DS-1: `backend/app/dsa/` package, zero third-party graph libraries**
-- [ ] **T7. DM-1: `backend/app/dm/` package & `docs/DM_PROOFS.md`**
+- [x] **T7. DM-1: `backend/app/dm/` package & `docs/DM_PROOFS.md`**
 
 ### PHASE C — Graph and analytics improvements
 - [ ] **T8. Multi-layer graph** (`relations.py`, `routes.py`, `schemas.py`, `GraphPage.tsx`)
@@ -83,3 +83,8 @@
 - **Changed**: Implemented `graph.py`, `union_find.py`, `topo.py` (Kahn's algorithm, `CycleError`, `is_unique_topological_order`), `heap.py` (`MinHeap`, `top_k`), `shortest_path.py` (Dijkstra with semantic edge cost), `mst.py` (Kruskal MST/MaxST), `trie.py`, and `hashtable.py` (open addressing linear probing). Integrated `HashTable` and `top_k` into `discovery.py`/`relations.py`, `dijkstra` into `research_graph.py`, and `Trie` into `GET /projects/{id}/autocomplete`. Added `backend/scripts/bench_dsa.py`.
 - **Tests**: `python -m pytest tests/ -q`: 41 passed (7 property-oracle tests x >=200 randomized cases each against `networkx`/`heapq`/`dict`). Benchmark (`bench_dsa.py`): HashTable 31.01ms vs dict 1.70ms (N=10k); top_k 9.93ms vs sorted 2.34ms (N=20k, k=25); Dijkstra 56.16ms vs nx 10.41ms (50 queries); Kruskal MST 5.09ms vs nx 4.80ms (V=300, E=1500).
 - **Acceptance**: `Select-String` for `networkx`/`sklearn` in `backend/app/dsa/` returned 0 matches. **PASS**.
+
+### T7 — DM-1: Hand-built `backend/app/dm/` package & `docs/DM_PROOFS.md`
+- **Changed**: Implemented `partial_order.py` (transitive reduction/Hasse diagram & closure), `path_counting.py` (Search Path Count DP over topo order), `main_path.py` (global & key-route main path with zero-edge guard), `inclusion_exclusion.py` (`union_size` + breakdown), `reading_path.py` (topological prerequisite ordering ranked by citation-DAG PageRank), and `docs/DM_PROOFS.md`. Exposed `GET /projects/{id}/hasse` and `GET /projects/{id}/reading-path`.
+- **Tests**: `python -m pytest tests/ -q`: 46 passed (hand-checked SPC/main-path DAG, 100 random DAG Hasse/closure checks vs NetworkX, inclusion-exclusion vs set union, reading path topological & PageRank cap checks).
+- **Acceptance**: Zero `networkx`/`sklearn` imports in `backend/app/dm/`; all 5 DM-1 tests + full suite green. **PASS**.
