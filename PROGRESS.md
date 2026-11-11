@@ -9,7 +9,7 @@
 - [x] **T1. Make chat retrieval actually hybrid** (`backend/app/services/chat.py`, new migration)
 - [x] **T2. Fix the Evolution service** (`backend/app/services/evolution.py`, `backend/app/services/constants.py`)
 - [x] **T3. Strict quote verification** (`backend/app/services/llm.py`, `facts_extraction.py`, `gaps.py`)
-- [ ] **T4. Correct graph construction and PageRank** (`relations.py`, `research_graph.py`, `routes.py`, `clustering.py`)
+- [x] **T4. Correct graph construction and PageRank** (`relations.py`, `research_graph.py`, `routes.py`, `clustering.py`)
 - [ ] **T5. Make the gap endpoint side-effect free** (`routes.py`, new migration, `GapsPage.tsx`)
 
 ### PHASE B — Hand-built Data Structures and Discrete Math
@@ -68,3 +68,8 @@
 - **Changed**: Added `services/constants.py` with shared relation-type & basis constants imported in `relations.py` and `evolution.py`; fixed `evolution.py` to query `RELATION_SIMILAR` and `.score` (fixing `"inferred_similarity"`/`.weight` bug); removed all template filler from `evolution.py`, `EvolutionPage.tsx`, and `GraphPage.tsx`; omitted empty phase windows; replaced keyword check in finding dynamics with structured Pydantic enum (`confirms|extends|contradicts|unrelated|insufficient_evidence`) + strict T3 quote validation across top-N similarity pairs.
 - **Tests**: `python -m pytest tests/ -q`: 27 passed; `npm --prefix frontend run build` passed.
 - **Acceptance**: `Select-String` grep for all removed filler strings across `backend/app/` and `frontend/src/` returned 0 matches. **PASS**.
+
+### T4 — Correct graph construction and PageRank
+- **Changed**: Added Alembic migration `b2c3d4e5f602_t4_directed_and_graph_cache.py` (`directed` boolean on `paper_relations`, `graph_analytics_cache` table); added batched L2-normalized mean chunk embedding helper `get_paper_embeddings` in `embeddings.py` used by `relations.py` & `clustering.py`; replaced O(N^2) pairwise loop & N+1 queries with O(1) lookup dicts, strict `fuzz.ratio >= 95` (±1 year) citation resolution, and pgvector LATERAL mutual k-NN (`SIM_K=4`, stored undirected `source_id < target_id`, `directed=False`); restricted PageRank strictly to citation DAG (`RELATION_CITES` only) with `(project_id, corpus_version)` caching.
+- **Tests**: `python -m pytest tests/ -q`: 31 passed (including L2 mean embedding test, PageRank invariance under added/reversed similarity edges, strict citation fuzz test, and 40-paper bounded SQL query count <= 15).
+- **Acceptance**: `alembic upgrade/downgrade/upgrade` succeeded; 40-paper relation build bounded to <= 15 SQL queries. **PASS**.

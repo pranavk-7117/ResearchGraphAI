@@ -353,10 +353,12 @@ def get_project_graph(
     )
     cluster_map = {m.paper_id: m.cluster_id for m in members}
 
-    # Compute PageRank centrality
+    # Compute PageRank centrality (cached per project_id + corpus_version)
     from app.services.research_graph import NetworkXGraphService
     G = NetworkXGraphService.build_project_graph(db, project.id)
-    graph_analytics = NetworkXGraphService.analyze_graph(G)
+    graph_analytics = NetworkXGraphService.analyze_graph(
+        G, db=db, project_id=project.id, corpus_version=project.corpus_version
+    )
     pagerank_map = graph_analytics.get("pagerank", {})
 
     nodes = []
@@ -395,6 +397,7 @@ def get_project_graph(
                 relation_type=rel.relation_type,
                 basis=rel.basis,
                 score=rel.score,
+                directed=bool(getattr(rel, "directed", rel.relation_type == "cites")),
             )
         )
 

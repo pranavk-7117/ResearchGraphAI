@@ -1,14 +1,17 @@
 """
 Paper Relations and Citation Resolution Service for ResearchGraphAI.
 
-Builds and resolves relations:
-- Citation edges: from explicit reference metadata / parsed reference lists.
-- Semantic similarity edges: from pgvector dense embeddings (clearly labelled as inferred).
-- Method/Dataset similarity: from structured paper facts.
+Builds and resolves relations cleanly without O(N^2) Python loops or N+1 queries:
+- Citation edges: O(R) resolution via in-memory lookup dicts + strict title fuzz.ratio >= 95 & year +-1.
+- Semantic similarity edges: Mutual k-NN (config SIM_K, default 4) via pgvector cosine distance (<=>)
+  over L2-normalized mean paper chunk embeddings, stored once as undirected (source_id < target_id, directed=False).
 """
 
+import os
+import re
 from typing import Any
 from rapidfuzz import fuzz
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -18,21 +21,164 @@ from app.services.constants import (
     RELATION_CITES,
     RELATION_SIMILAR,
 )
-from app.services.embeddings import cosine_similarity
+from app.services.embeddings import cosine_similarity, get_paper_embeddings
+
+_DOI_RE = re.compile(r"10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", re.IGNORECASE)
+_OA_RE = re.compile(r"\b(W\d{6,})\b", re.IGNORECASE)
+_ARXIV_RE = re.compile(r"\b(\d{4}\.\d{4,5}(?:v\d+)?)\b", re.IGNORECASE)
+_YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
+
+
+def _normalize_title_simple(title: str | None) -> str:
+    if not title:
+        return ""
+    return " ".join(re.sub(r"[^\w\s]", " ", title).lower().split())
 
 
 class RelationsService:
+    def _build_citation_lookups(self, papers: list[models.Paper]) -> dict[str, Any]:
+        """Build O(1) lookup indices across all candidate papers in the project."""
+        doi_map: dict[str, int] = {}
+        oa_map: dict[str, int] = {}
+        s2_map: dict[str, int] = {}
+        arxiv_map: dict[str, int] = {}
+        title_hash_map: dict[str, int] = {}
+        norm_title_map: dict[str, int] = {}
+        year_map: dict[int, int | None] = {}
+        title_list: list[tuple[int, str, int | None]] = []
+
+        for p in papers:
+            year_map[p.id] = p.year
+            if p.doi:
+                doi_map[p.doi.strip().lower()] = p.id
+            if p.openalex_id:
+                oa_full = p.openalex_id.strip().lower()
+                oa_short = oa_full.split("/")[-1]
+                oa_map[oa_full] = p.id
+                oa_map[oa_short] = p.id
+            if p.s2_id:
+                s2_map[p.s2_id.strip().lower()] = p.id
+            if p.arxiv_id:
+                arxiv_map[p.arxiv_id.strip().lower()] = p.id
+            if p.title_hash:
+                title_hash_map[p.title_hash] = p.id
+            nt = _normalize_title_simple(p.title)
+            if nt:
+                norm_title_map[nt] = p.id
+                title_list.append((p.id, nt, p.year))
+
+        return {
+            "doi": doi_map,
+            "oa": oa_map,
+            "s2": s2_map,
+            "arxiv": arxiv_map,
+            "title_hash": title_hash_map,
+            "norm_title": norm_title_map,
+            "years": year_map,
+            "titles": title_list,
+        }
+
+    def _resolve_reference(self, ref: models.PaperReference, lookups: dict[str, Any]) -> int | None:
+        """Resolve a single PaperReference in O(1) via identifier dicts, with strict fuzzy title fallback."""
+        citing_id = ref.citing_paper_id
+
+        if ref.doi:
+            tid = lookups["doi"].get(ref.doi.strip().lower())
+            if tid and tid != citing_id:
+                return tid
+
+        raw = (ref.raw_reference or "").strip()
+        if not raw:
+            return None
+
+        # Extract identifiers in O(1) lookup
+        for m in _DOI_RE.findall(raw):
+            tid = lookups["doi"].get(m.lower().rstrip("."))
+            if tid and tid != citing_id:
+                return tid
+
+        for m in _OA_RE.findall(raw):
+            tid = lookups["oa"].get(m.lower())
+            if tid and tid != citing_id:
+                return tid
+
+        for m in _ARXIV_RE.findall(raw):
+            tid = lookups["arxiv"].get(m.lower())
+            if tid and tid != citing_id:
+                return tid
+
+        raw_lower = raw.lower()
+        for s2_id, tid in lookups["s2"].items():
+            if tid != citing_id and s2_id in raw_lower:
+                return tid
+
+        norm_raw = _normalize_title_simple(raw)
+        if norm_raw in lookups["norm_title"]:
+            tid = lookups["norm_title"][norm_raw]
+            if tid != citing_id:
+                return tid
+
+        # Strict full-title fuzzy match: fuzz.ratio >= 95 and equal year +-1 (no partial_ratio)
+        year_matches = _YEAR_RE.findall(raw)
+        ref_year = int(year_matches[-1]) if year_matches else None
+        if len(norm_raw) >= 12:
+            for tid, cand_title, cand_year in lookups["titles"]:
+                if tid == citing_id:
+                    continue
+                if ref_year is not None and cand_year is not None and abs(ref_year - cand_year) > 1:
+                    continue
+                if fuzz.ratio(cand_title, norm_raw) >= 95:
+                    return tid
+
+        return None
+
+    def _pgvector_all_top_k_neighbors(
+        self,
+        db: Session,
+        paper_ids: list[int],
+        sim_k: int,
+    ) -> dict[int, dict[int, float]]:
+        """Query top-K nearest neighbors for every paper in a single pgvector LATERAL SQL query."""
+        sql = text("""
+            WITH paper_embs AS (
+                SELECT paper_id, AVG(embedding) AS mean_emb
+                FROM paper_chunks
+                WHERE paper_id IN :paper_ids
+                GROUP BY paper_id
+            )
+            SELECT
+                a.paper_id AS source_id,
+                n.neighbor_id,
+                n.sim
+            FROM paper_embs a
+            CROSS JOIN LATERAL (
+                SELECT
+                    b.paper_id AS neighbor_id,
+                    1 - (b.mean_emb <=> a.mean_emb) AS sim
+                FROM paper_embs b
+                WHERE b.paper_id != a.paper_id
+                ORDER BY b.mean_emb <=> a.mean_emb ASC
+                LIMIT :k
+            ) n;
+        """).bindparams(bindparam("paper_ids", expanding=True))
+        rows = db.execute(sql, {"paper_ids": paper_ids, "k": sim_k}).fetchall()
+        out: dict[int, dict[int, float]] = {}
+        for r in rows:
+            out.setdefault(int(r.source_id), {})[int(r.neighbor_id)] = float(r.sim)
+        return out
+
     def build_project_relations(
         self,
         db: Session,
         project_id: int,
-        similarity_threshold: float = 0.52,
+        sim_k: int | None = None,
     ) -> list[models.PaperRelation]:
         """
-        Derive both metadata citation edges and inferred semantic relations
-        across papers in a research project.
+        Derive citation metadata edges and mutual k-NN semantic similarity edges
+        across papers in a research project using bounded SQL queries.
         """
-        # Get all papers in this project
+        k_val = int(sim_k if sim_k is not None else os.getenv("SIM_K", "4"))
+
         project_papers = (
             db.query(models.ProjectPaper)
             .filter(models.ProjectPaper.project_id == project_id)
@@ -42,174 +188,93 @@ class RelationsService:
         if not paper_ids:
             return []
 
-        papers = (
-            db.query(models.Paper)
-            .filter(models.Paper.id.in_(paper_ids))
-            .all()
-        )
-        paper_map = {p.id: p for p in papers}
-
-        created_relations: list[models.PaperRelation] = []
-
-        # 1. Resolve Citation Metadata Edges
-        # Check references for each paper
+        papers = db.query(models.Paper).filter(models.Paper.id.in_(paper_ids)).all()
         refs = (
             db.query(models.PaperReference)
             .filter(models.PaperReference.citing_paper_id.in_(paper_ids))
             .all()
         )
+        existing_rels = (
+            db.query(models.PaperRelation)
+            .filter(models.PaperRelation.project_id == project_id)
+            .all()
+        )
+        existing_keys = {
+            (r.source_id, r.target_id, r.relation_type) for r in existing_rels
+        }
 
+        created_relations: list[models.PaperRelation] = []
+
+        # 1. Resolve Citation Metadata Edges in O(R)
+        lookups = self._build_citation_lookups(papers)
         for ref in refs:
-            target_paper_id = None
-
-            # Direct DOI match
-            if ref.doi:
-                for p in papers:
-                    if p.doi and p.doi.lower() == ref.doi.lower() and p.id != ref.citing_paper_id:
-                        target_paper_id = p.id
-                        break
-
-            # Raw reference matching (OpenAlex ID, S2 ID, arXiv ID, DOI, or Title)
-            if not target_paper_id and ref.raw_reference:
-                ref_text_lower = ref.raw_reference.lower()
-                for p in papers:
-                    if p.id == ref.citing_paper_id:
-                        continue
-                    # Check OpenAlex ID
-                    if p.openalex_id:
-                        oa_short = p.openalex_id.split("/")[-1].lower()
-                        if oa_short in ref_text_lower:
-                            target_paper_id = p.id
-                            break
-                    # Check S2 ID
-                    if p.s2_id and p.s2_id.lower() in ref_text_lower:
-                        target_paper_id = p.id
-                        break
-                    # Check Arxiv ID
-                    if p.arxiv_id and p.arxiv_id.lower() in ref_text_lower:
-                        target_paper_id = p.id
-                        break
-                    # Check DOI inside raw reference
-                    if p.doi and p.doi.lower() in ref_text_lower:
-                        target_paper_id = p.id
-                        break
-                    # Check Title substring or fuzzy match
-                    title_clean = p.title.lower()
-                    if len(title_clean) > 15 and title_clean in ref_text_lower:
-                        target_paper_id = p.id
-                        break
-                    elif fuzz.partial_ratio(title_clean, ref_text_lower) > 90:
-                        target_paper_id = p.id
-                        break
-
-            if target_paper_id:
-                ref.cited_paper_id = target_paper_id
-                ref.resolved = True
-
-                # Check if relation already exists
-                existing = (
-                    db.query(models.PaperRelation)
-                    .filter(
-                        models.PaperRelation.project_id == project_id,
-                        models.PaperRelation.source_id == ref.citing_paper_id,
-                        models.PaperRelation.target_id == target_paper_id,
-                        models.PaperRelation.relation_type == RELATION_CITES,
-                    )
-                    .first()
-                )
-                if not existing:
-                    rel = models.PaperRelation(
-                        project_id=project_id,
-                        source_id=ref.citing_paper_id,
-                        target_id=target_paper_id,
-                        relation_type=RELATION_CITES,
-                        basis=BASIS_CITATION_METADATA,
-                        score=1.0,
-                    )
-                    db.add(rel)
-                    created_relations.append(rel)
-
-        # 2. Derive Semantic Similarity Edges (Inferred)
-        # Fetch embeddings from chunks or compute average
-        paper_embeddings: dict[int, list[float]] = {}
-        for p in papers:
-            # Check chunks
-            chunk = (
-                db.query(models.PaperChunk)
-                .filter(models.PaperChunk.paper_id == p.id)
-                .order_by(models.PaperChunk.chunk_index)
-                .first()
-            )
-            if chunk and chunk.embedding:
-                emb = chunk.embedding
-                if hasattr(emb, "tolist"):
-                    emb = emb.tolist()
-                paper_embeddings[p.id] = list(emb)
-
-        # Pairwise comparison
-        paper_id_list = list(paper_embeddings.keys())
-        sim_scores_per_paper: dict[int, list[tuple[float, int]]] = {pid: [] for pid in paper_id_list}
-        pairwise_sims: list[tuple[float, int, int]] = []
-
-        for i in range(len(paper_id_list)):
-            for j in range(i + 1, len(paper_id_list)):
-                id_a = paper_id_list[i]
-                id_b = paper_id_list[j]
-                sim = cosine_similarity(paper_embeddings[id_a], paper_embeddings[id_b])
-                pairwise_sims.append((sim, id_a, id_b))
-                sim_scores_per_paper[id_a].append((sim, id_b))
-                sim_scores_per_paper[id_b].append((sim, id_a))
-
-        # 1. Connect all pairs meeting similarity threshold
-        connected_pairs: set[tuple[int, int]] = set()
-        for sim, id_a, id_b in pairwise_sims:
-            if sim >= similarity_threshold:
-                connected_pairs.add((min(id_a, id_b), max(id_a, id_b)))
-
-        # 2. Ensure every paper has at least top 2 peers connected if similarity >= 0.38
-        for pid, peer_sims in sim_scores_per_paper.items():
-            peer_sims.sort(key=lambda x: x[0], reverse=True)
-            for sim, peer_id in peer_sims[:2]:
-                if sim >= 0.38:
-                    connected_pairs.add((min(pid, peer_id), max(pid, peer_id)))
-
-        for id_a, id_b in connected_pairs:
-            # Check if already connected by citation
-            existing_cite = (
-                db.query(models.PaperRelation)
-                .filter(
-                    models.PaperRelation.project_id == project_id,
-                    models.PaperRelation.source_id.in_([id_a, id_b]),
-                    models.PaperRelation.target_id.in_([id_a, id_b]),
-                    models.PaperRelation.relation_type == RELATION_CITES,
-                )
-                .first()
-            )
-            if existing_cite:
+            target_paper_id = self._resolve_reference(ref, lookups)
+            if not target_paper_id:
                 continue
-
-            existing_sim = (
-                db.query(models.PaperRelation)
-                .filter(
-                    models.PaperRelation.project_id == project_id,
-                    models.PaperRelation.source_id == id_a,
-                    models.PaperRelation.target_id == id_b,
-                    models.PaperRelation.relation_type == RELATION_SIMILAR,
-                )
-                .first()
-            )
-            if not existing_sim:
-                sim_val = cosine_similarity(paper_embeddings[id_a], paper_embeddings[id_b])
+            ref.cited_paper_id = target_paper_id
+            ref.resolved = True
+            key = (ref.citing_paper_id, target_paper_id, RELATION_CITES)
+            if key not in existing_keys:
+                existing_keys.add(key)
                 rel = models.PaperRelation(
                     project_id=project_id,
-                    source_id=id_a,
-                    target_id=id_b,
-                    relation_type=RELATION_SIMILAR,
-                    basis=BASIS_EMBEDDING_SIMILARITY,
-                    score=round(float(sim_val), 4),
+                    source_id=ref.citing_paper_id,
+                    target_id=target_paper_id,
+                    relation_type=RELATION_CITES,
+                    basis=BASIS_CITATION_METADATA,
+                    score=1.0,
+                    directed=True,
                 )
                 db.add(rel)
                 created_relations.append(rel)
+
+        # 2. Paper Embeddings (L2-normalized mean of all chunks, fallback abstract)
+        paper_embeddings = get_paper_embeddings(db, papers, embed_missing=True)
+
+        # 3. Mutual k-NN via single batched pgvector LATERAL query
+        top_k_map: dict[int, dict[int, float]] = {}
+        try:
+            top_k_map = self._pgvector_all_top_k_neighbors(db, paper_ids, k_val)
+        except Exception:
+            db.rollback()
+            top_k_map = {}
+
+        pids_with_emb = list(paper_embeddings.keys())
+        for pid in pids_with_emb:
+            if pid not in top_k_map and len(pids_with_emb) > 1:
+                scored = [
+                    (other_id, cosine_similarity(paper_embeddings[pid], paper_embeddings[other_id]))
+                    for other_id in pids_with_emb
+                    if other_id != pid
+                ]
+                scored.sort(key=lambda x: x[1], reverse=True)
+                top_k_map[pid] = {nid: sim for nid, sim in scored[:k_val]}
+
+        # Mutual k-NN: edge (a, b) with a < b exists iff b in top_k(a) AND a in top_k(b)
+        mutual_pairs: dict[tuple[int, int], float] = {}
+        for u, u_neighbors in top_k_map.items():
+            for v, sim_uv in u_neighbors.items():
+                if u in top_k_map.get(v, {}):
+                    a, b = (u, v) if u < v else (v, u)
+                    if (a, b) not in mutual_pairs:
+                        mutual_pairs[(a, b)] = sim_uv
+
+        for (id_a, id_b), sim_val in mutual_pairs.items():
+            key = (id_a, id_b, RELATION_SIMILAR)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            rel = models.PaperRelation(
+                project_id=project_id,
+                source_id=id_a,
+                target_id=id_b,
+                relation_type=RELATION_SIMILAR,
+                basis=BASIS_EMBEDDING_SIMILARITY,
+                score=round(float(sim_val), 4),
+                directed=False,
+            )
+            db.add(rel)
+            created_relations.append(rel)
 
         db.commit()
         return created_relations

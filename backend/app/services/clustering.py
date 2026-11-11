@@ -13,6 +13,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.embeddings import get_paper_embeddings
 from app.services.llm import LLMService
 
 
@@ -49,23 +50,10 @@ class ClusteringService:
         )
         paper_map = {p.id: p for p in papers}
 
-        # Collect embeddings
-        embeddings_list: list[list[float]] = []
-        valid_paper_ids: list[int] = []
-
-        for p in papers:
-            chunk = (
-                db.query(models.PaperChunk)
-                .filter(models.PaperChunk.paper_id == p.id)
-                .order_by(models.PaperChunk.chunk_index)
-                .first()
-            )
-            if chunk and chunk.embedding:
-                emb = chunk.embedding
-                if hasattr(emb, "tolist"):
-                    emb = emb.tolist()
-                embeddings_list.append(list(emb))
-                valid_paper_ids.append(p.id)
+        # Collect L2-normalized mean paper embeddings in a single batched query
+        paper_embs = get_paper_embeddings(db, papers, embed_missing=False)
+        valid_paper_ids = [p.id for p in papers if p.id in paper_embs]
+        embeddings_list = [paper_embs[pid] for pid in valid_paper_ids]
 
         if len(valid_paper_ids) < 2:
             return []

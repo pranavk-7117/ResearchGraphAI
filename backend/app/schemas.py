@@ -124,9 +124,10 @@ class GraphEdge(BaseModel):
     id: int
     source: int
     target: int
-    relation_type: str  # cites | similar
-    basis: str  # citation_metadata | embedding_similarity
+    relation_type: str  # cites | similar | coupling
+    basis: str  # citation_metadata | embedding_similarity | bibliographic_coupling
     score: float
+    directed: bool = True
 
 
 class GraphOut(BaseModel):

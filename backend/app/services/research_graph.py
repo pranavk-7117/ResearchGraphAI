@@ -1,10 +1,10 @@
 """
 NetworkX-Powered Graph Intelligence Service for ResearchGraphAI.
 
-Constructs directed academic knowledge graphs from paper_relations:
-- Explicit citation edges vs inferred semantic similarity edges
-- Graph metrics: PageRank centrality, betweenness, weakly connected components
-- Path analysis with transparent edge weight explanations
+Enforces strict separation of edge semantics:
+- PageRank centrality is computed ONLY on the directed citation DAG (relation_type == 'cites').
+  Similarity / coupling edges never enter PageRank.
+- Graph analytics are cached per (project_id, corpus_version) in graph_analytics_cache.
 """
 
 from typing import Any
@@ -12,6 +12,7 @@ import networkx as nx
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.constants import RELATION_CITES
 
 
 class NetworkXGraphService:
@@ -20,7 +21,6 @@ class NetworkXGraphService:
         """Construct a NetworkX DiGraph from stored paper relations."""
         G = nx.DiGraph()
 
-        # Add all project papers as nodes
         project_papers = (
             db.query(models.ProjectPaper, models.Paper)
             .join(models.Paper, models.ProjectPaper.paper_id == models.Paper.id)
@@ -37,7 +37,6 @@ class NetworkXGraphService:
                 abstract_only=pp.abstract_only,
             )
 
-        # Add relations as edges
         relations = (
             db.query(models.PaperRelation)
             .filter(models.PaperRelation.project_id == project_id)
@@ -45,7 +44,7 @@ class NetworkXGraphService:
         )
 
         for rel in relations:
-            # Weight: citation = 1.0, similarity = score
+            directed = bool(getattr(rel, "directed", rel.relation_type == RELATION_CITES))
             G.add_edge(
                 rel.source_id,
                 rel.target_id,
@@ -53,65 +52,132 @@ class NetworkXGraphService:
                 relation_type=rel.relation_type,
                 basis=rel.basis,
                 weight=rel.score,
+                directed=directed,
             )
 
         return G
 
     @staticmethod
-    def analyze_graph(G: nx.DiGraph) -> dict[str, Any]:
-        """Compute structural graph analytics."""
+    def build_citation_dag(G: nx.DiGraph) -> nx.DiGraph:
+        """Extract ONLY directed citation edges (citing -> cited) onto all graph nodes."""
+        dag = nx.DiGraph()
+        dag.add_nodes_from(G.nodes(data=True))
+        for u, v, data in G.edges(data=True):
+            if data.get("relation_type") == RELATION_CITES:
+                dag.add_edge(u, v, **data)
+        return dag
+
+    @staticmethod
+    def analyze_graph(
+        G: nx.DiGraph,
+        db: Session | None = None,
+        project_id: int | None = None,
+        corpus_version: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        Compute structural graph analytics with optional (project_id, corpus_version) DB caching.
+        PageRank runs strictly on the citation DAG only.
+        """
+        if db is not None and project_id is not None and corpus_version is not None:
+            cached = (
+                db.query(models.GraphAnalyticsCache)
+                .filter(
+                    models.GraphAnalyticsCache.project_id == project_id,
+                    models.GraphAnalyticsCache.corpus_version == corpus_version,
+                )
+                .first()
+            )
+            if cached and cached.analytics:
+                # Normalize JSON string keys back to int node IDs
+                raw_pr = cached.analytics.get("pagerank", {})
+                cached_out = dict(cached.analytics)
+                cached_out["pagerank"] = {int(k): float(v) for k, v in raw_pr.items()}
+                return cached_out
+
         if len(G.nodes) == 0:
             return {
                 "total_nodes": 0,
                 "total_edges": 0,
                 "pagerank": {},
                 "connected_components": [],
+                "density": 0.0,
             }
 
-        # PageRank centrality
+        citation_dag = NetworkXGraphService.build_citation_dag(G)
         try:
-            pagerank = nx.pagerank(G, weight="weight")
-            # Round scores
-            pagerank = {k: round(v, 4) for k, v in pagerank.items()}
+            pagerank = nx.pagerank(citation_dag, weight="weight")
+            pagerank = {int(k): round(float(v), 6) for k, v in pagerank.items()}
         except Exception:
-            pagerank = {n: 1.0 / len(G.nodes) for n in G.nodes}
+            pagerank = {int(n): round(1.0 / len(G.nodes), 6) for n in G.nodes}
 
-        # Weakly connected components
         components = [
             list(comp)
             for comp in nx.weakly_connected_components(G)
         ]
 
-        return {
+        analytics = {
             "total_nodes": len(G.nodes),
             "total_edges": len(G.edges),
+            "citation_edges": len(citation_dag.edges),
             "pagerank": pagerank,
             "connected_components": components,
-            "density": round(nx.density(G), 4),
+            "density": round(float(nx.density(G)), 4),
         }
+
+        if db is not None and project_id is not None and corpus_version is not None:
+            try:
+                existing = (
+                    db.query(models.GraphAnalyticsCache)
+                    .filter(
+                        models.GraphAnalyticsCache.project_id == project_id,
+                        models.GraphAnalyticsCache.corpus_version == corpus_version,
+                    )
+                    .first()
+                )
+                serializable = dict(analytics)
+                serializable["pagerank"] = {str(k): v for k, v in pagerank.items()}
+                if existing:
+                    existing.analytics = serializable
+                else:
+                    db.add(models.GraphAnalyticsCache(
+                        project_id=project_id,
+                        corpus_version=corpus_version,
+                        analytics=serializable,
+                    ))
+                db.commit()
+            except Exception:
+                db.rollback()
+
+        return analytics
 
     @staticmethod
     def explain_path(G: nx.DiGraph, source_id: int, target_id: int) -> dict[str, Any] | None:
-        """Find and explain the path between two papers."""
+        """Find and explain the shortest path between two papers."""
         if not G.has_node(source_id) or not G.has_node(target_id):
             return None
 
+        # Undirected edges can be traversed in either direction for path explanation
+        traversal_graph = nx.DiGraph()
+        traversal_graph.add_nodes_from(G.nodes(data=True))
+        for u, v, data in G.edges(data=True):
+            traversal_graph.add_edge(u, v, **data)
+            if not data.get("directed", True):
+                traversal_graph.add_edge(v, u, **data)
+
         try:
-            path_nodes = nx.shortest_path(G, source=source_id, target=target_id)
+            path_nodes = nx.shortest_path(traversal_graph, source=source_id, target=target_id)
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
 
         path_edges = []
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
-            data = G.get_edge_data(u, v) or {}
-            rel_type = data.get("relation_type", "connected")
-            basis = data.get("basis", "inference")
+            data = traversal_graph.get_edge_data(u, v) or {}
             path_edges.append({
                 "from": u,
                 "to": v,
-                "relation_type": rel_type,
-                "basis": basis,
+                "relation_type": data.get("relation_type", "connected"),
+                "basis": data.get("basis", "inference"),
                 "weight": data.get("weight", 1.0),
             })
 

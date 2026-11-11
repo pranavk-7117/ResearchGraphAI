@@ -251,12 +251,26 @@ class PaperRelation(Base):
     basis: Mapped[str] = mapped_column(String(50))
     # citation_metadata | extracted_text | embedding_similarity | llm_inference
     score: Mapped[float] = mapped_column(Float, default=1.0)
+    directed: Mapped[bool] = mapped_column(Boolean, default=True)
     evidence_chunk_ids: Mapped[list[int]] = mapped_column(JSONB, default=list)
     method_version: Mapped[str] = mapped_column(String(50), default="1.0")
 
     project: Mapped["ResearchProject"] = relationship(back_populates="relations")
     source_paper: Mapped["Paper"] = relationship(foreign_keys=[source_id])
     target_paper: Mapped["Paper"] = relationship(foreign_keys=[target_id])
+
+
+class GraphAnalyticsCache(Base):
+    __tablename__ = "graph_analytics_cache"
+    __table_args__ = (
+        UniqueConstraint("project_id", "corpus_version", name="uq_graph_analytics_cache_proj_ver"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), index=True)
+    corpus_version: Mapped[int] = mapped_column(Integer)
+    analytics: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 # ==============================================================================

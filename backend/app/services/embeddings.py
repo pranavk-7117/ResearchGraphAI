@@ -108,3 +108,60 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if denom == 0:
         return 0.0
     return float(np.dot(av, bv) / denom)
+
+
+def l2_normalize_vector(vec: np.ndarray) -> list[float]:
+    """Return L2-normalized list[float] for a 1D numpy vector."""
+    norm = float(np.linalg.norm(vec))
+    if norm == 0.0:
+        return vec.tolist()
+    return (vec / norm).tolist()
+
+
+def get_paper_embeddings(
+    db: Any,
+    papers: list[Any],
+    embed_missing: bool = False,
+    embed_service: EmbeddingService | None = None,
+) -> dict[int, list[float]]:
+    """
+    Compute L2-normalized mean of all stored chunk embeddings per paper in a single query.
+    Falls back to batch-embedding abstract/title when embed_missing=True and a paper has no chunks.
+    """
+    from app import models
+
+    if not papers:
+        return {}
+    paper_ids = [p.id for p in papers]
+    rows = (
+        db.query(models.PaperChunk.paper_id, models.PaperChunk.embedding)
+        .filter(models.PaperChunk.paper_id.in_(paper_ids))
+        .all()
+    )
+    grouped: dict[int, list[np.ndarray]] = {}
+    for pid, emb in rows:
+        if emb is None:
+            continue
+        arr = np.array(emb.tolist() if hasattr(emb, "tolist") else emb, dtype=np.float32)
+        grouped.setdefault(pid, []).append(arr)
+
+    result: dict[int, list[float]] = {}
+    missing_papers = []
+    for p in papers:
+        vecs = grouped.get(p.id)
+        if vecs:
+            result[p.id] = l2_normalize_vector(np.mean(vecs, axis=0))
+        elif embed_missing and (p.abstract or p.title):
+            missing_papers.append(p)
+
+    if missing_papers:
+        svc = embed_service or EmbeddingService()
+        texts = [f"{p.title}. {p.abstract or ''}".strip() for p in missing_papers]
+        try:
+            fallback_vecs = svc.embed_batch(texts)
+            for p, fvec in zip(missing_papers, fallback_vecs):
+                result[p.id] = l2_normalize_vector(np.array(fvec, dtype=np.float32))
+        except Exception:
+            pass
+
+    return result
