@@ -12,6 +12,7 @@ insufficient-evidence response instead of padding with unretrieved abstracts.
 """
 
 import os
+import re
 import uuid
 from typing import Any
 from sqlalchemy import bindparam, text
@@ -221,10 +222,13 @@ class ChatService:
         context_str = "\n\n".join(context_blocks)
 
         prompt = (
+            f"Project Research Topic: {project.topic}\n"
             f"User Question: {question}\n\n"
+            "Note: Unless the user explicitly names a specific individual paper from the excerpts above, treat references to "
+            f"'{project.topic}' as referring to the overall multi-paper project corpus above.\n"
             "Respond to the question strictly and solely based on the retrieved academic excerpts above. "
             "Format your response with three distinct markdown sections:\n"
-            "### Evidence\n(Direct findings and factual quotes attributed with citation numbers like [1])\n\n"
+            "### Evidence\n(Direct findings and exact factual quotes from the retrieved papers, attributed with citation numbers like [1])\n\n"
             "### Interpretation\n(Synthesis of what the evidence demonstrates regarding the question)\n\n"
             "### Suggestions\n(Follow-up research questions or methodologies to explore next)\n\n"
             "If the excerpts do not contain sufficient evidence to answer, state clearly in the Evidence section "
@@ -233,7 +237,7 @@ class ChatService:
 
         system_prompt = (
             "You are a rigorous scientific research assistant. "
-            "Every single claim in the Evidence section MUST be attributed with bracketed numbers like [1]. "
+            "Every single claim in the Evidence section MUST be attributed with ASCII square brackets like [1]. "
             "Never invent facts, metrics, or citations."
         )
 
@@ -253,9 +257,10 @@ class ChatService:
                 + "- Review the cited passages directly."
             )
 
+        raw_answer = re.sub(r"【(\d+(?:\s*,\s*\d+)*)】", r"[\1]", raw_answer)
         used_citations: list[dict[str, Any]] = []
         for idx, p in enumerate(retrieved_passages, start=1):
-            if f"[{idx}]" in raw_answer:
+            if f"[{idx}]" in raw_answer or re.search(rf"\[[^\]]*\b{idx}\b[^\]]*\]", raw_answer):
                 used_citations.append({
                     "ref": f"[{idx}]",
                     "paper_id": p["paper_id"],

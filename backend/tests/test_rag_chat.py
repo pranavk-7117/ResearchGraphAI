@@ -71,6 +71,14 @@ def test_chat_query_rag_with_passages():
     assert res["citations"][0]["paper_id"] == 10
     assert res["citations"][0]["ref"] == "[1]"
 
+    # Unicode lenticular brackets 【1】 must normalize to [1] and still match citation
+    chat_service.llm.complete = MagicMock(
+        return_value="### Evidence\nPiezoresistive sensors measure pressure【1】."
+    )
+    res_uni = chat_service.query_rag(db, 999, "What sensors?")
+    assert "[1]" in res_uni["answer"]
+    assert len(res_uni["citations"]) == 1
+
 
 def test_dense_only_hit():
     """Dense-only retrieval succeeds when FTS returns empty."""

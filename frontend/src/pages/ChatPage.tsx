@@ -17,7 +17,7 @@ export function ChatPage({ project }: { project: Project | null }) {
 
   const dynamicSuggestions = project
     ? [
-        `What are the primary methodologies evaluated in "${project.topic}"?`,
+        `What are the primary methodologies evaluated across papers on ${project.topic}?`,
         `What empirical datasets and benchmarks are used in this corpus?`,
         `What common hardware, algorithmic, or practical limitations are reported?`,
         `How do recent papers improve accuracy, efficiency, or robustness?`,
@@ -94,7 +94,7 @@ export function ChatPage({ project }: { project: Project | null }) {
           </span>
           <h1 style={{ margin: "4px 0" }}>Scholarly Q&A: "{project.topic}"</h1>
           <p style={{ margin: 0, fontSize: 13, color: "#64748b" }}>
-            Hybrid pgvector + SQL text search with Reciprocal Rank Fusion. Every claim is attributed to stored passage excerpts.
+            Hybrid pgvector + PostgreSQL full-text search with convex score fusion. Every claim is attributed to stored passage excerpts.
           </p>
         </div>
         <button
