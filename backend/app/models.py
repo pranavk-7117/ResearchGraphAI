@@ -158,6 +158,7 @@ class ProjectPaper(Base):
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
     processing_status: Mapped[str] = mapped_column(String(50), default="discovered")
     abstract_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    sources: Mapped[list[str]] = mapped_column(JSONB, default=list)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 

@@ -22,7 +22,7 @@
 - [x] **T10. Evolution uses main-path analysis** (`evolution.py`, `EvolutionPage.tsx`)
 
 ### PHASE D — The differentiators
-- [ ] **T11. Corpus completeness meter** (`completeness.py`, endpoint, migration, UI card)
+- [x] **T11. Corpus completeness meter** (`completeness.py`, endpoint, migration, UI card)
 - [ ] **T12. Auditable gap engine** (`gaps.py`, `gap_matrix.py`, migration, `GapsPage.tsx`)
 - [ ] **T12b. Temporal holdout validation** (`backend/scripts/gap_holdout.py`, `evaluation/`)
 - [ ] **T13. Evaluation harness** (`evaluation/evaluate_retrieval.py`, `evaluate_attribution.py`, `evaluate.py`, `docs/EVALUATION.md`)
@@ -103,3 +103,8 @@
 - **Changed**: Built chronological citation DAG (`DSAGraph`) in `evolution.py` using `app.dm.main_path` (`global_main_path` and `key_route_main_path` with SPC weights), configurable `MIN_BACKBONE_CITATIONS` (default 3) sparsity guard with zero silent similarity fallback, and optional `CITATION_INTENT_PRUNING` flag that cleanly skips when no full-text chunks exist. Exposed `citation_backbone` via `EvolutionOut` (`schemas.py`, `routes.py`), `api.ts`, and rendered a Time-Lane Citation Backbone chain + sparsity warning banner in `EvolutionPage.tsx`.
 - **Tests**: `python -m pytest tests/ -q`: 52 passed (diamond DAG SPC main-path selection, similarity isolation, sparse citation warning, intent pruning skip); `npm --prefix frontend run build` passed.
 - **Acceptance**: Diamond DAG main path matches hand-calculated SPC; sparse graph emits warning without similarity fallback. **PASS**.
+
+### T11 — Corpus completeness meter
+- **Changed**: Added Alembic migration `d4e5f6070804_t11_project_paper_sources.py` adding JSONB `sources` column on `project_papers` (with backfill from `papers.source_name`); updated `DiscoveryService._deduplicate_candidates` and `_persist_candidates` (`discovery.py`, `clients/base.py`) to retain all intersecting discovery sources per paper (`openalex`, `semantic_scholar`, `arxiv`). Created `services/completeness.py` computing DM-1 `inclusion_exclusion_breakdown` and bias-corrected Chapman capture-recapture estimator (`Seber` 1970 variance, 95% CI, refusal when `overlap m < 5`, explicit lower-bound disclaimer; `statsmodels` absent so Chapman on best pair is explicitly noted). Exposed `GET /projects/{id}/completeness` and added the Corpus Completeness card to `DiscoverPage.tsx`.
+- **Tests**: `python -m pytest tests/ -q`: 56 passed (multi-source deduplication provenance, Venn union & low-overlap refusal, closed-form LP/Chapman checks, 500-trial simulation achieving >= 90% 95%-CI empirical coverage); `alembic upgrade/downgrade/upgrade` & `npm --prefix frontend run build` passed.
+- **Acceptance**: 500-trial CI coverage >= 90% and `m < 5` suppression verified. **PASS**.

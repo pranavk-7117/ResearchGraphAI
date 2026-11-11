@@ -127,50 +127,63 @@ class DiscoveryService:
         return results
 
     def _deduplicate_candidates(self, candidates: list[RawCandidatePaper]) -> list[RawCandidatePaper]:
-        seen_dois: set[str] = set()
-        seen_s2: set[str] = set()
-        seen_arxiv: set[str] = set()
+        seen_dois: dict[str, RawCandidatePaper] = {}
+        seen_s2: dict[str, RawCandidatePaper] = {}
+        seen_arxiv: dict[str, RawCandidatePaper] = {}
         seen_hashes = HashTable()
         unique: list[RawCandidatePaper] = []
+
+        def _merge_sources(target: RawCandidatePaper, incoming: RawCandidatePaper) -> None:
+            combined = set(target.sources or ([target.source] if target.source else []))
+            combined.update(incoming.sources or ([incoming.source] if incoming.source else []))
+            target.sources = sorted(combined)
 
         for c in candidates:
             # Check DOI
             if c.doi:
                 doi_norm = c.doi.strip().lower()
                 if doi_norm in seen_dois:
+                    _merge_sources(seen_dois[doi_norm], c)
                     continue
-                seen_dois.add(doi_norm)
 
             # Check S2
-            if c.source == "semantic_scholar" and c.external_id:
-                if c.external_id in seen_s2:
-                    continue
-                seen_s2.add(c.external_id)
+            if c.source == "semantic_scholar" and c.external_id and c.external_id in seen_s2:
+                _merge_sources(seen_s2[c.external_id], c)
+                continue
 
             # Check arXiv
-            if c.source == "arxiv" and c.external_id:
-                if c.external_id in seen_arxiv:
-                    continue
-                seen_arxiv.add(c.external_id)
+            if c.source == "arxiv" and c.external_id and c.external_id in seen_arxiv:
+                _merge_sources(seen_arxiv[c.external_id], c)
+                continue
 
             # Check normalized title hash
             thash = hash_title(c.title)
-            if thash in seen_hashes:
+            existing_hash_match = seen_hashes.get(thash)
+            if existing_hash_match is not None:
+                _merge_sources(existing_hash_match, c)
                 continue
 
             # Fuzzy match check against recent unique items
-            is_fuzzy_dup = False
+            fuzzy_target: RawCandidatePaper | None = None
             norm_curr = normalize_title(c.title)
             for u in unique[-50:]:
                 norm_u = normalize_title(u.title)
                 if fuzz.token_set_ratio(norm_curr, norm_u) > 88:
-                    is_fuzzy_dup = True
+                    fuzzy_target = u
                     break
 
-            if is_fuzzy_dup:
+            if fuzzy_target is not None:
+                _merge_sources(fuzzy_target, c)
                 continue
 
-            seen_hashes.put(thash, True)
+            c.sources = sorted(set(c.sources or ([c.source] if c.source else [])))
+            if c.doi:
+                seen_dois[c.doi.strip().lower()] = c
+            if c.source == "semantic_scholar" and c.external_id:
+                seen_s2[c.external_id] = c
+            if c.source == "arxiv" and c.external_id:
+                seen_arxiv[c.external_id] = c
+            seen_hashes.put(thash, c)
             unique.append(c)
 
         return unique
@@ -305,6 +318,7 @@ class DiscoveryService:
                 .first()
             )
 
+            cand_sources = sorted(set(cand.sources or ([cand.source] if cand.source else [])))
             if not project_paper:
                 project_paper = models.ProjectPaper(
                     project_id=project_id,
@@ -315,12 +329,14 @@ class DiscoveryService:
                     selected=False,  # Discovery strictly produces candidates
                     processing_status="discovered",
                     abstract_only=cand.metadata_only,
+                    sources=cand_sources,
                 )
                 db.add(project_paper)
             else:
                 project_paper.rank = rank_idx
                 project_paper.relevance_score = score
                 project_paper.score_components = components
+                project_paper.sources = sorted(set(project_paper.sources or []) | set(cand_sources))
 
             # Store raw references if available
             for ref in cand.raw_references[:20]:

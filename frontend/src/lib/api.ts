@@ -301,6 +301,31 @@ export type ChatResponse = {
   retrieved_count: number;
 };
 
+export type CompletenessData = {
+  project_id: number;
+  total_observed: number;
+  venn_breakdown: {
+    singles: Record<string, number>;
+    pairwise: Record<string, number>;
+    triple: Record<string, number>;
+    union_size: number;
+  };
+  best_pair: {
+    sources: [string, string];
+    n1: number;
+    n2: number;
+    overlap_m: number;
+  } | null;
+  lincoln_petersen_estimate: number | null;
+  chapman_estimate: number | null;
+  ci_95: [number, number] | null;
+  estimated_coverage_pct: number | null;
+  estimate_available: boolean;
+  is_lower_bound: boolean;
+  method: string;
+  disclaimer: string;
+};
+
 export type PaperAnalysis = {
   id: number;
   paper_title: string;
@@ -399,6 +424,7 @@ export const api = {
       return request<Job>(`/projects/${projectId}/discover?${sp.toString()}`, { method: "POST" });
     },
     getCandidates: (projectId: number) => request<Paper[]>(`/projects/${projectId}/candidates`),
+    completeness: (projectId: number) => request<CompletenessData>(`/projects/${projectId}/completeness`),
     selectCandidates: (projectId: number, paperIds: number[], selectAll = false) =>
       request<{ ok: boolean; selected_count: number }>(`/projects/${projectId}/select-candidates`, {
         method: "POST",

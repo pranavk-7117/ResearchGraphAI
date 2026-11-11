@@ -25,6 +25,13 @@ class RawCandidatePaper:
     citation_count: int = 0
     raw_references: list[str] = field(default_factory=list)
     metadata_only: bool = False
+    sources: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.sources and self.source:
+            self.sources = [self.source]
+        elif self.source and self.source not in self.sources:
+            self.sources = [self.source, *self.sources]
 
 
 class AcademicSourceClient(ABC):

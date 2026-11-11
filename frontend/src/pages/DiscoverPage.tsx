@@ -12,7 +12,7 @@ import {
   Square,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, Job, Paper, Project } from "../lib/api";
+import { api, CompletenessData, Job, Paper, Project } from "../lib/api";
 
 export function DiscoverPage({
   project,
@@ -22,6 +22,7 @@ export function DiscoverPage({
   onProcessingComplete: () => void;
 }) {
   const [candidates, setCandidates] = useState<Paper[]>([]);
+  const [completeness, setCompleteness] = useState<CompletenessData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,8 +74,12 @@ export function DiscoverPage({
     setLoading(true);
     setError(null);
     try {
-      const data = await api.discovery.getCandidates(project.id);
+      const [data, comp] = await Promise.all([
+        api.discovery.getCandidates(project.id),
+        api.discovery.completeness(project.id).catch(() => null),
+      ]);
       setCandidates(data);
+      setCompleteness(comp);
       // Select all by default if none selected
       const ids = new Set<number>();
       data.forEach((p) => {
@@ -280,6 +285,56 @@ export function DiscoverPage({
         <div style={{ marginBottom: 20, padding: 16, background: "#fee2e2", color: "#991b1b", borderRadius: 8 }}>
           <strong>Error:</strong> {error}
         </div>
+      )}
+
+      {/* T11 Corpus Completeness & Multi-Source Venn Overlap Card */}
+      {completeness && completeness.total_observed > 0 && (
+        <article className="panel" style={{ padding: 18, marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+                Corpus Completeness Meter (Lower-Bound Capture-Recapture)
+              </h3>
+              <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b" }}>
+                Inclusion-Exclusion multi-source union: <strong>{completeness.venn_breakdown.union_size}</strong> unique paper(s) across indexed sources
+              </p>
+            </div>
+            {completeness.estimate_available && completeness.chapman_estimate ? (
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "#2563eb" }}>
+                  ~{completeness.estimated_coverage_pct}% coverage
+                </div>
+                <div style={{ fontSize: 11, color: "#475569" }}>
+                  Est. total (lower bound): <strong>{completeness.chapman_estimate}</strong>
+                  {completeness.ci_95 ? ` (95% CI: ${completeness.ci_95[0]}–${completeness.ci_95[1]})` : ""}
+                </div>
+              </div>
+            ) : (
+              <span style={{ fontSize: 11, fontWeight: 600, background: "#fffbeb", color: "#92400e", border: "1px solid #fde68a", padding: "4px 10px", borderRadius: 12 }}>
+                Capture-recapture estimate suppressed (overlap &lt; 5)
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 10 }}>
+            {Object.entries(completeness.venn_breakdown.singles).map(([src, count]) => (
+              <div key={src} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "8px 10px" }}>
+                <div style={{ fontSize: 10, textTransform: "uppercase", color: "#64748b", fontWeight: 600 }}>{src.replace("_", " ")}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a" }}>{count}</div>
+              </div>
+            ))}
+            {Object.entries(completeness.venn_breakdown.pairwise).map(([pair, count]) => (
+              <div key={pair} style={{ background: "#eff6ff", border: "1px solid #dbeafe", borderRadius: 6, padding: "8px 10px" }}>
+                <div style={{ fontSize: 10, color: "#1d4ed8", fontWeight: 600 }}>{pair.replace(/_/g, " ")}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#1e3a8a" }}>{count} overlap</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 11, color: "#64748b", background: "#f8fafc", borderRadius: 6, padding: "8px 10px" }}>
+            {completeness.disclaimer}
+          </div>
+        </article>
       )}
 
       {/* Candidate List Header & Action */}

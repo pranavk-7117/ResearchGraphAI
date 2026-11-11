@@ -28,6 +28,7 @@ from app.services.constants import RELATION_COUPLING, layer_for_relation
 from app.services.chat import ChatService
 from app.services.clustering import ClusteringService
 from app.services.compare import CompareService
+from app.services.completeness import CompletenessService
 from app.services.discovery import DiscoveryService
 from app.services.embeddings import EmbeddingService
 from app.services.evolution import EvolutionService
@@ -240,6 +241,17 @@ def get_candidates(
     return out
 
 
+@router.get("/projects/{project_id}/completeness")
+def get_project_completeness(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Read-only corpus completeness estimation via Inclusion-Exclusion and Chapman capture-recapture."""
+    project = verify_project_ownership(project_id, user, db)
+    return CompletenessService().compute(db, project.id)
+
+
 @router.post("/projects/{project_id}/select-candidates")
 def select_candidates(
     project_id: int,
@@ -331,6 +343,17 @@ def list_project_papers(
             )
         )
     return out
+
+
+@router.get("/projects/{project_id}/completeness")
+def get_project_completeness(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Read-only corpus completeness estimation via Inclusion-Exclusion and Chapman capture-recapture."""
+    project = verify_project_ownership(project_id, user, db)
+    return CompletenessService().compute(db, project.id)
 
 
 @router.get("/projects/{project_id}/graph", response_model=schemas.GraphOut)
