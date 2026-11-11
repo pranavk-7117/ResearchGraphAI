@@ -128,7 +128,7 @@ Open `http://localhost:5174` in your browser.
 ## 4. Empirical Evaluation & Tests
 
 ### Automated Test Suite
-Run the full pytest suite (15 unit and integration tests covering JWT auth, cross-user denial, PDF parsing, OCR detection, deduplication, ranking, citation resolution, gap scoring, and worker locks):
+Run the full pytest suite (19 tests: 16 offline unit tests + 3 PostgreSQL integration tests covering JWT auth, cross-user denial, PDF parsing, OCR detection, deduplication, ranking, citation resolution, gap scoring, RAG chat, and worker locks):
 
 ```bash
 cd backend
