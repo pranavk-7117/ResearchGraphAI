@@ -93,136 +93,24 @@ export function EvolutionPage({ project }: { project: Project | null }) {
   }
 
   const topic = project?.topic || "Research Topic";
-  const totalPapers = data.total_papers || project?.paper_count || 25;
+  const totalPapers = data.total_papers ?? project?.paper_count ?? 0;
 
   const timeRange = useMemo(() => {
     if (data.time_range && data.time_range.min_year) {
       return data.time_range;
     }
-    return { min_year: 2018, max_year: 2025 };
+    return { min_year: 0, max_year: 0 };
   }, [data.time_range]);
 
-  // Dynamic Phases adapted to active project and real clusters
+  // Phases returned directly from backend data (no synthetic fallbacks)
   const phases: EvolutionPhase[] = useMemo(() => {
-    if (data.phases && data.phases.length > 0) {
-      return data.phases;
-    }
-    const min = timeRange.min_year;
-    const max = timeRange.max_year;
-    const span = max - min;
-    const p1End = min + Math.max(1, Math.round(span * 0.25));
-    const p2End = min + Math.max(2, Math.round(span * 0.50));
-    const p3End = min + Math.max(3, Math.round(span * 0.75));
+    return data.phases || [];
+  }, [data.phases]);
 
-    const c0 = clusters[0]?.label || `${topic} Foundations`;
-    const c1 = clusters[1]?.label || `${topic} Architectures`;
-    const c2 = clusters[2]?.label || `Advanced ${topic} Methods`;
-    const c3 = clusters[3]?.label || `Applied ${topic} Systems`;
-
-    return [
-      {
-        phase_num: 1,
-        start_year: min,
-        end_year: p1End,
-        title: c0,
-        description: `Initial explorations and baseline concepts in ${c0.toLowerCase()}.`,
-        paper_count: Math.max(1, Math.round(totalPapers * 0.24)),
-      },
-      {
-        phase_num: 2,
-        start_year: p1End + 1,
-        end_year: p2End,
-        title: c1,
-        description: `Methodological development and specialized architectures in ${c1.toLowerCase()}.`,
-        paper_count: Math.max(1, Math.round(totalPapers * 0.28)),
-      },
-      {
-        phase_num: 3,
-        start_year: p2End + 1,
-        end_year: p3End,
-        title: c2,
-        description: `Advanced algorithmic modeling and automated frameworks in ${c2.toLowerCase()}.`,
-        paper_count: Math.max(1, Math.round(totalPapers * 0.32)),
-      },
-      {
-        phase_num: 4,
-        start_year: p3End + 1,
-        end_year: max,
-        title: c3,
-        description: `Practical integration, deployment benchmarks and real-world ${c3.toLowerCase()}.`,
-        paper_count: Math.max(1, Math.round(totalPapers * 0.16)),
-      },
-    ];
-  }, [data.phases, timeRange, totalPapers, clusters, topic]);
-
-  // Dynamic Transitions adapted to active project and real clusters
+  // Transitions returned directly from backend data
   const transitions: EvolutionTransitionItem[] = useMemo(() => {
-    if (data.transitions && data.transitions.length > 0) {
-      return data.transitions;
-    }
-    const p = phases;
-    const p1Title = p[0]?.title || `${topic} Foundations`;
-    const p2Title = p[1]?.title || `${topic} Methods`;
-    const p3Title = p[2]?.title || `Advanced ${topic}`;
-    const p4Title = p[3]?.title || `Applied ${topic}`;
-
-    return [
-      {
-        phase_from: 1,
-        phase_to: 2,
-        badge: `Phase 1 → Phase 2  (${p[0]?.start_year || 2018} – ${p[1]?.start_year || 2020})`,
-        year_range: `${p[0]?.start_year || 2018} – ${p[1]?.start_year || 2020}`,
-        title: `From ${p1Title.toLowerCase()} to ${p2Title.toLowerCase()}`,
-        description: `Early studies explored foundational ${p1Title.toLowerCase()}, leading to structured implementations in ${p2Title.toLowerCase()}.`,
-        key_changes: [
-          `Progression beyond initial ${p1Title.toLowerCase()} concepts`,
-          `Introduction of specialized frameworks for ${topic.toLowerCase()}`,
-          `Adoption of quantitative empirical evaluation metrics`,
-        ],
-        paper_count: Math.max(1, p[0]?.paper_count || 1),
-      },
-      {
-        phase_from: 2,
-        phase_to: 3,
-        badge: `Phase 2 → Phase 3  (${p[1]?.start_year || 2020} – ${p[2]?.start_year || 2022})`,
-        year_range: `${p[1]?.start_year || 2020} – ${p[2]?.start_year || 2022}`,
-        title: `From ${p2Title.toLowerCase()} to ${p3Title.toLowerCase()}`,
-        description: `Research progressed from prototype implementations toward computational algorithms and ${p3Title.toLowerCase()}.`,
-        key_changes: [
-          `Integration of advanced algorithms and models`,
-          `Transition from isolated tools to end-to-end ${topic.toLowerCase()} pipelines`,
-          `Evaluation across larger and more diverse benchmark datasets`,
-        ],
-        paper_count: Math.max(1, p[1]?.paper_count || 2),
-      },
-      {
-        phase_from: 3,
-        phase_to: 4,
-        badge: `Phase 3 → Phase 4  (${p[2]?.start_year || 2022} – ${p[3]?.start_year || 2024})`,
-        year_range: `${p[2]?.start_year || 2022} – ${p[3]?.start_year || 2024}`,
-        title: `From ${p3Title.toLowerCase()} to real-world deployment`,
-        description: `Studies expanded from algorithmic experimentation toward practical applications, user interaction and ${p4Title.toLowerCase()}.`,
-        key_changes: [
-          `Focus on real-world system validation and robustness`,
-          `Integration with interactive and responsive interfaces`,
-          `Enhanced latency optimization and operational reliability`,
-        ],
-        paper_count: Math.max(1, p[2]?.paper_count || 2),
-      },
-      {
-        badge: `Recent Advancements  (${p[3]?.start_year || 2024} – ${p[3]?.end_year || 2025})`,
-        year_range: `${p[3]?.start_year || 2024} – ${p[3]?.end_year || 2025}`,
-        title: `Towards adaptive and autonomous ${topic.toLowerCase()} systems`,
-        description: `Latest literature explores adaptive control, multimodal feedback, and intelligent systems in ${p4Title.toLowerCase()}.`,
-        key_changes: [
-          `Context-aware and user-adaptive architectures`,
-          `Multimodal integration and low-latency response`,
-          `Convergence of automated intelligence and practical workflows`,
-        ],
-        paper_count: Math.max(1, p[3]?.paper_count || 1),
-      },
-    ];
-  }, [data.transitions, phases, topic]);
+    return data.transitions || [];
+  }, [data.transitions]);
 
   // Filtered transitions
   const filteredTransitions = useMemo(() => {
@@ -236,7 +124,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
       if (transitionSearchQuery.trim()) {
         const q = transitionSearchQuery.toLowerCase();
         const matchesTitle = item.title.toLowerCase().includes(q);
-        const matchesDesc = item.description.toLowerCase().includes(q);
+        const matchesDesc = (item.description || "").toLowerCase().includes(q);
         const matchesChanges = item.key_changes.some((k) => k.toLowerCase().includes(q));
         if (!matchesTitle && !matchesDesc && !matchesChanges) return false;
       }
@@ -249,57 +137,20 @@ export function EvolutionPage({ project }: { project: Project | null }) {
     if (data.focus_trends && data.focus_trends.series && data.focus_trends.series.length > 0) {
       return data.focus_trends;
     }
-    const years = [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
-    const clusterColors = ["#3b82f6", "#8b5cf6", "#10b981", "#f59e0b"];
-    const series = clusters.slice(0, 4).map((c, idx) => ({
-      name: c.label,
-      color: clusterColors[idx % clusterColors.length],
-      data: [3 + idx, 4, 6 + (idx % 2), 5, 7 - idx, 6 + idx, 5, 4],
-    }));
-
-    if (series.length === 0) {
-      series.push({
-        name: topic,
-        color: "#3b82f6",
-        data: [2, 3, 5, 7, 8, 9, 8, 7],
-      });
-    }
-
-    return { years, series };
-  }, [data.focus_trends, clusters, topic]);
+    return { years: [], series: [] };
+  }, [data.focus_trends]);
 
   // Annual Milestones
   const annualMilestones: AnnualMilestone[] = useMemo(() => {
-    if (data.annual_milestones && data.annual_milestones.length > 0) {
-      return data.annual_milestones;
-    }
-    // Synthesize from phases
-    return phases.map((p, idx) => ({
-      year: p.start_year,
-      paper_count: p.paper_count,
-      top_theme: p.title,
-      milestone_title: `Milestone: Advances in ${p.title}`,
-      papers: p.papers || [],
-    }));
-  }, [data.annual_milestones, phases]);
+    return data.annual_milestones || [];
+  }, [data.annual_milestones]);
 
-  // Paper Stream (Image 3)
+  // Paper Stream Lineage
   const paperStream: StreamPaperItem[] = useMemo(() => {
-    if (data.paper_stream && data.paper_stream.length > 0) {
-      return data.paper_stream;
-    }
-    // Collect from phases or transitions
-    const list: StreamPaperItem[] = [];
-    phases.forEach((ph) => {
-      if (ph.papers) list.push(...ph.papers);
-    });
-    transitions.forEach((tr) => {
-      if (tr.papers) list.push(...tr.papers);
-    });
-    return Array.from(new Map(list.map((p) => [p.id, p])).values());
-  }, [data.paper_stream, phases, transitions]);
+    return data.paper_stream || [];
+  }, [data.paper_stream]);
 
-  // Filtered Paper Stream for Image 3 View
+  // Filtered Paper Stream
   const filteredPaperStream = useMemo(() => {
     return paperStream.filter((p) => {
       if (streamYearFilter !== "all") {
@@ -312,7 +163,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
       if (streamSearchQuery.trim()) {
         const q = streamSearchQuery.toLowerCase();
         const mTitle = p.title.toLowerCase().includes(q);
-        const mAuthors = p.authors_str.toLowerCase().includes(q);
+        const mAuthors = (p.authors_str || "").toLowerCase().includes(q);
         const mAbstract = (p.abstract || "").toLowerCase().includes(q);
         const mContrib = (p.key_contribution || "").toLowerCase().includes(q);
         if (!mTitle && !mAuthors && !mAbstract && !mContrib) return false;
@@ -322,18 +173,8 @@ export function EvolutionPage({ project }: { project: Project | null }) {
   }, [paperStream, streamYearFilter, streamTopicFilter, streamSearchQuery]);
 
   const keyInsights = useMemo(() => {
-    if (data.key_insights && data.key_insights.length > 0) {
-      return data.key_insights;
-    }
-    const p1 = phases[0]?.title || "initial studies";
-    const p3 = phases[2]?.title || "advanced methods";
-    const p4 = phases[3]?.title || "practical implementations";
-    return [
-      `Research in "${topic}" evolved from early ${p1.toLowerCase()} into integrated systems over ${timeRange.min_year}–${timeRange.max_year}.`,
-      `The emergence of ${p3} represents a primary methodological inflection point in this corpus.`,
-      `Recent literature emphasizes ${p4.toLowerCase()} and real-world system validation.`,
-    ];
-  }, [data.key_insights, phases, topic, timeRange]);
+    return data.key_insights || [];
+  }, [data.key_insights]);
 
   if (!project) {
     return (
@@ -723,7 +564,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                     {p.title}
                                   </h4>
                                   <div style={{ fontSize: 11, color: "#64748b" }}>
-                                    {p.authors_str} {p.venue ? `· ${p.venue}` : ""}
+                                    {p.authors_str || "Authors not available"} {p.venue ? `· ${p.venue}` : ""}
                                   </div>
                                   {p.abstract && (
                                     <p style={{ fontSize: 11, color: "#475569", margin: "6px 0 0", lineHeight: 1.4 }}>
@@ -737,9 +578,11 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                 <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 6 }}>
                                   <Quote size={11} /> {p.citation_count} Citations
                                 </span>
-                                <span style={{ fontSize: 11, color: "#475569", background: "#f1f5f9", padding: "3px 8px", borderRadius: 6 }}>
-                                  {p.pub_type || "Conference"}
-                                </span>
+                                {p.pub_type && (
+                                  <span style={{ fontSize: 11, color: "#475569", background: "#f1f5f9", padding: "3px 8px", borderRadius: 6 }}>
+                                    {p.pub_type}
+                                  </span>
+                                )}
                                 {(p.url || p.doi) && (
                                   <a
                                     href={p.url || `https://doi.org/${p.doi}`}
@@ -765,7 +608,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                               </div>
                             </div>
 
-                            {/* Card Bottom 3 Columns (Image 3) */}
+                            {/* Card Bottom 3 Columns */}
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, background: "#f8fafc", padding: "10px 12px", borderRadius: 8, border: "1px solid #edf2f7" }}>
                               {/* Col 1: Key Contribution */}
                               <div>
@@ -773,36 +616,48 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                   <Lightbulb size={13} /> Key Contribution
                                 </div>
                                 <div style={{ fontSize: 11, color: "#334155", lineHeight: 1.35 }}>
-                                  {p.key_contribution || "Empirical analysis in automated vehicle control."}
+                                  {p.key_contribution || "Not extracted yet"}
                                 </div>
                               </div>
 
-                              {/* Col 2: Gaps Solved */}
+                              {/* Col 2: Gaps / Limitations Noted */}
                               <div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#059669", marginBottom: 4 }}>
-                                  <CheckCircle2 size={13} /> Gaps Solved
+                                  <CheckCircle2 size={13} /> Limitations / Gaps
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                                  {(p.gaps_solved && p.gaps_solved.length > 0 ? p.gaps_solved : ["Addresses earlier evaluation and latency limits."]).map((g, gIdx) => (
-                                    <div key={gIdx} style={{ fontSize: 11, color: "#334155", display: "flex", alignItems: "flex-start", gap: 4 }}>
-                                      <span style={{ color: "#059669", fontWeight: 700 }}>✓</span>
-                                      <span>{g}</span>
-                                    </div>
-                                  ))}
+                                  {p.gaps_solved && p.gaps_solved.length > 0 ? (
+                                    p.gaps_solved.map((g, gIdx) => (
+                                      <div key={gIdx} style={{ fontSize: 11, color: "#334155", display: "flex", alignItems: "flex-start", gap: 4 }}>
+                                        <span style={{ color: "#059669", fontWeight: 700 }}>•</span>
+                                        <span>{g}</span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Not extracted</span>
+                                  )}
                                 </div>
                               </div>
 
-                              {/* Col 3: New Aspects Introduced */}
+                              {/* Col 3: Cluster / Theme */}
                               <div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#7c3aed", marginBottom: 4 }}>
-                                  <Sparkles size={13} /> New Aspects Introduced
+                                  <Sparkles size={13} /> Cluster Tag
                                 </div>
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                                  {(p.new_aspects && p.new_aspects.length > 0 ? p.new_aspects : ["Voice control", "Real-time parsing", "Embedded system"]).map((tag, tIdx) => (
-                                    <span key={tIdx} style={{ fontSize: 10, background: "#ede9fe", color: "#6d28d9", padding: "2px 7px", borderRadius: 10, fontWeight: 500 }}>
-                                      {tag}
+                                  {p.new_aspects && p.new_aspects.length > 0 ? (
+                                    p.new_aspects.map((tag, tIdx) => (
+                                      <span key={tIdx} style={{ fontSize: 10, background: "#ede9fe", color: "#6d28d9", padding: "2px 7px", borderRadius: 10, fontWeight: 500 }}>
+                                        {tag}
+                                      </span>
+                                    ))
+                                  ) : p.topic_tag ? (
+                                    <span style={{ fontSize: 10, background: "#ede9fe", color: "#6d28d9", padding: "2px 7px", borderRadius: 10, fontWeight: 500 }}>
+                                      {p.topic_tag}
                                     </span>
-                                  ))}
+                                  ) : (
+                                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Not assigned</span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -1283,8 +1138,15 @@ export function EvolutionPage({ project }: { project: Project | null }) {
               {(data.finding_dynamics || []).map((f, idx) => (
                 <div key={idx} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 16 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, background: f.kind === "finding_confirms" ? "#dcfce7" : "#fee2e2", color: f.kind === "finding_confirms" ? "#166534" : "#991b1b", padding: "2px 8px", borderRadius: 4 }}>
-                      {f.kind === "finding_confirms" ? "Finding Confirms / Extends" : "Finding Contradicts / Voids"}
+                    <span style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      background: (f.kind === "confirms" || f.kind === "extends" || f.kind === "finding_confirms") ? "#dcfce7" : f.kind === "insufficient_evidence" ? "#fef3c7" : "#fee2e2",
+                      color: (f.kind === "confirms" || f.kind === "extends" || f.kind === "finding_confirms") ? "#166534" : f.kind === "insufficient_evidence" ? "#92400e" : "#991b1b",
+                      padding: "2px 8px",
+                      borderRadius: 4,
+                    }}>
+                      {f.kind}
                     </span>
                     <span style={{ fontSize: 11, color: "#64748b" }}>
                       {f.from_paper.year || "earlier"} vs {f.to_paper.year || "later"}

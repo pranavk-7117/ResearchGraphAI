@@ -1087,7 +1087,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                 </h4>
 
                 <div style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>
-                  {selectedNode.authors_str || "Authors indexed"} · {selectedNode.year || "n.d."}
+                  {selectedNode.authors_str || "Authors not available"} · {selectedNode.year || "n.d."}
                   {selectedNode.venue ? ` · ${selectedNode.venue}` : ""}
                 </div>
 

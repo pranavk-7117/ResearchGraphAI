@@ -12,6 +12,12 @@ from rapidfuzz import fuzz
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.constants import (
+    BASIS_CITATION_METADATA,
+    BASIS_EMBEDDING_SIMILARITY,
+    RELATION_CITES,
+    RELATION_SIMILAR,
+)
 from app.services.embeddings import cosine_similarity
 
 
@@ -107,7 +113,7 @@ class RelationsService:
                         models.PaperRelation.project_id == project_id,
                         models.PaperRelation.source_id == ref.citing_paper_id,
                         models.PaperRelation.target_id == target_paper_id,
-                        models.PaperRelation.relation_type == "cites",
+                        models.PaperRelation.relation_type == RELATION_CITES,
                     )
                     .first()
                 )
@@ -116,8 +122,8 @@ class RelationsService:
                         project_id=project_id,
                         source_id=ref.citing_paper_id,
                         target_id=target_paper_id,
-                        relation_type="cites",
-                        basis="citation_metadata",
+                        relation_type=RELATION_CITES,
+                        basis=BASIS_CITATION_METADATA,
                         score=1.0,
                     )
                     db.add(rel)
@@ -175,7 +181,7 @@ class RelationsService:
                     models.PaperRelation.project_id == project_id,
                     models.PaperRelation.source_id.in_([id_a, id_b]),
                     models.PaperRelation.target_id.in_([id_a, id_b]),
-                    models.PaperRelation.relation_type == "cites",
+                    models.PaperRelation.relation_type == RELATION_CITES,
                 )
                 .first()
             )
@@ -188,7 +194,7 @@ class RelationsService:
                     models.PaperRelation.project_id == project_id,
                     models.PaperRelation.source_id == id_a,
                     models.PaperRelation.target_id == id_b,
-                    models.PaperRelation.relation_type == "similar",
+                    models.PaperRelation.relation_type == RELATION_SIMILAR,
                 )
                 .first()
             )
@@ -198,8 +204,8 @@ class RelationsService:
                     project_id=project_id,
                     source_id=id_a,
                     target_id=id_b,
-                    relation_type="similar",
-                    basis="embedding_similarity",
+                    relation_type=RELATION_SIMILAR,
+                    basis=BASIS_EMBEDDING_SIMILARITY,
                     score=round(float(sim_val), 4),
                 )
                 db.add(rel)

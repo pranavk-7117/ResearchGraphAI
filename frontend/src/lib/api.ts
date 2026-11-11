@@ -109,15 +109,15 @@ export type StreamPaperItem = {
   id: number;
   title: string;
   year: number | null;
-  authors_str: string;
+  authors_str?: string | null;
   abstract?: string | null;
-  venue?: string;
-  pub_type?: string;
+  venue?: string | null;
+  pub_type?: string | null;
   citation_count: number;
   doi?: string | null;
   url?: string | null;
-  topic_tag?: string;
-  key_contribution?: string;
+  topic_tag?: string | null;
+  key_contribution?: string | null;
   gaps_solved?: string[];
   new_aspects?: string[];
 };
@@ -127,10 +127,10 @@ export type EvolutionPhase = {
   start_year: number;
   end_year: number;
   title: string;
-  description: string;
+  description?: string | null;
   paper_count: number;
   icon?: string;
-  dominant_theme?: string;
+  dominant_theme?: string | null;
   papers?: StreamPaperItem[];
 };
 
@@ -140,7 +140,7 @@ export type EvolutionTransitionItem = {
   badge?: string;
   year_range: string;
   title: string;
-  description: string;
+  description?: string | null;
   key_changes: string[];
   paper_count: number;
   kind?: string;
@@ -159,7 +159,7 @@ export type EvolutionFocusTrend = {
 export type AnnualMilestone = {
   year: number;
   paper_count: number;
-  top_theme: string;
+  top_theme?: string | null;
   milestone_title: string;
   papers: StreamPaperItem[];
 };

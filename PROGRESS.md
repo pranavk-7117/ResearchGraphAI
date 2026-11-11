@@ -7,7 +7,7 @@
   - Rewrite `PROGRESS.md` to the new Phase A–E checklist.
   - Align `README.md` test count with real `pytest` collection count.
 - [x] **T1. Make chat retrieval actually hybrid** (`backend/app/services/chat.py`, new migration)
-- [ ] **T2. Fix the Evolution service** (`backend/app/services/evolution.py`, `backend/app/services/constants.py`)
+- [x] **T2. Fix the Evolution service** (`backend/app/services/evolution.py`, `backend/app/services/constants.py`)
 - [x] **T3. Strict quote verification** (`backend/app/services/llm.py`, `facts_extraction.py`, `gaps.py`)
 - [ ] **T4. Correct graph construction and PageRank** (`relations.py`, `research_graph.py`, `routes.py`, `clustering.py`)
 - [ ] **T5. Make the gap endpoint side-effect free** (`routes.py`, new migration, `GapsPage.tsx`)
@@ -63,3 +63,8 @@
 - **Changed**: Replaced `post_validate_citation` in `services/llm.py` with whitespace/case/hyphen normalization, exact normalized substring matching, and localized ordered token-sequence LCS fallback (`>= 0.9`) returning `{verified, chunk_id, match_type, score}`; updated `facts_extraction.py` to validate strictly per cited chunk and added `quote_verification_precision(project_id, db)`; updated `gaps.py` to verify all evidence items against stored chunks and exclude unverified quotes from gap scores.
 - **Tests**: `python -m pytest tests/ -q` (`backend/`): 25 passed (exact, token-sequence threshold, paraphrase rejection, wrong-chunk failure, gap score exclusion, precision metric).
 - **Acceptance**: All 4 grounding tests + full suite passed. **PASS**.
+
+### T2 — Fix the Evolution service
+- **Changed**: Added `services/constants.py` with shared relation-type & basis constants imported in `relations.py` and `evolution.py`; fixed `evolution.py` to query `RELATION_SIMILAR` and `.score` (fixing `"inferred_similarity"`/`.weight` bug); removed all template filler from `evolution.py`, `EvolutionPage.tsx`, and `GraphPage.tsx`; omitted empty phase windows; replaced keyword check in finding dynamics with structured Pydantic enum (`confirms|extends|contradicts|unrelated|insufficient_evidence`) + strict T3 quote validation across top-N similarity pairs.
+- **Tests**: `python -m pytest tests/ -q`: 27 passed; `npm --prefix frontend run build` passed.
+- **Acceptance**: `Select-String` grep for all removed filler strings across `backend/app/` and `frontend/src/` returned 0 matches. **PASS**.
