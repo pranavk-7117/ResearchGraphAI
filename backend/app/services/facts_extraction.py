@@ -18,6 +18,7 @@ from app.services.llm import LLMService, post_validate_citation
 class ExtractedField(BaseModel):
     value: str = Field(description="The factual finding or extracted description")
     quote: str = Field(description="Direct verbatim sentence quote from the paper text")
+    chunk_id: int | None = Field(default=None, description="Chunk ID from context where quote appears")
     page: int | None = Field(default=None, description="Page number where quote appears")
     confidence: float = Field(default=0.9, description="Confidence score from 0.0 to 1.0")
 
@@ -133,28 +134,45 @@ class FactExtractionService:
             db.commit()
             return fact_row
 
-        # Post-validate citations against actual chunk texts
-        full_text_corpus = " ".join(p["text"] for p in passages)
+        # Post-validate citations strictly against the specific cited chunk
+        passages_by_id = {
+            p["chunk_id"]: p for p in passages if p.get("chunk_id") is not None
+        }
 
         def format_field(f: ExtractedField | None) -> dict[str, Any] | None:
             if not f or not f.value:
                 return None
-            valid = post_validate_citation(f.quote, full_text_corpus) if f.quote else True
-            # Match to specific chunk
-            matched_chunk_id = None
-            if f.quote:
-                for p in passages:
-                    if post_validate_citation(f.quote, p["text"]):
-                        matched_chunk_id = p["chunk_id"]
-                        break
 
+            verification = {"verified": False, "chunk_id": f.chunk_id, "match_type": "none", "score": 0.0}
+            if f.quote and f.quote.strip():
+                if f.chunk_id is not None and f.chunk_id in passages_by_id:
+                    verification = post_validate_citation(
+                        f.quote, passages_by_id[f.chunk_id]["text"], chunk_id=f.chunk_id
+                    )
+                elif f.chunk_id is None:
+                    best_unverified = verification
+                    for p in passages:
+                        res = post_validate_citation(
+                            f.quote, p["text"], chunk_id=p.get("chunk_id")
+                        )
+                        if res["verified"]:
+                            verification = res
+                            break
+                        if res["score"] > best_unverified["score"]:
+                            best_unverified = res
+                    else:
+                        verification = best_unverified
+
+            valid = bool(verification["verified"])
             return {
                 "value": f.value,
                 "quote": f.quote,
                 "page": f.page,
-                "chunk_id": matched_chunk_id,
+                "chunk_id": verification["chunk_id"],
                 "confidence": f.confidence if valid else round(f.confidence * 0.5, 2),
                 "verified": valid,
+                "match_type": verification["match_type"],
+                "verification_score": verification["score"],
             }
 
         fact_row = models.PaperFact(
@@ -177,3 +195,62 @@ class FactExtractionService:
         db.add(fact_row)
         db.commit()
         return fact_row
+
+
+FACT_QUOTE_FIELDS = (
+    "research_question",
+    "problem",
+    "method",
+    "algorithm_or_model",
+    "dataset",
+    "metrics",
+    "results",
+    "limitations",
+    "future_work",
+    "claimed_contributions",
+)
+
+
+def quote_verification_precision(project_id: int, db: Session | None = None) -> float:
+    """
+    Compute corpus-level quote verification precision for a project:
+    verified_quotes / total_quotes across extracted PaperFact fields and ResearchGap evidence.
+    Returns 0.0 if no quotes exist.
+    """
+    own_session = db is None
+    if own_session:
+        from app.database import SessionLocal
+        db = SessionLocal()
+
+    try:
+        paper_ids = [
+            r[0]
+            for r in db.query(models.ProjectPaper.paper_id)
+            .filter(models.ProjectPaper.project_id == project_id)
+            .all()
+        ]
+        total_quotes = 0
+        verified_quotes = 0
+
+        if paper_ids:
+            facts = db.query(models.PaperFact).filter(models.PaperFact.paper_id.in_(paper_ids)).all()
+            for fact in facts:
+                for field_name in FACT_QUOTE_FIELDS:
+                    val = getattr(fact, field_name, None)
+                    if isinstance(val, dict) and (val.get("quote") or "").strip():
+                        total_quotes += 1
+                        if val.get("verified") is True:
+                            verified_quotes += 1
+
+        gaps = db.query(models.ResearchGap).filter(models.ResearchGap.project_id == project_id).all()
+        for gap in gaps:
+            for ev in (gap.supporting_evidence or []) + (gap.counter_evidence or []):
+                if isinstance(ev, dict) and (ev.get("quote") or "").strip():
+                    total_quotes += 1
+                    if ev.get("verified") is True:
+                        verified_quotes += 1
+
+        return round(verified_quotes / total_quotes, 4) if total_quotes > 0 else 0.0
+    finally:
+        if own_session:
+            db.close()

@@ -8,7 +8,7 @@
   - Align `README.md` test count with real `pytest` collection count.
 - [x] **T1. Make chat retrieval actually hybrid** (`backend/app/services/chat.py`, new migration)
 - [ ] **T2. Fix the Evolution service** (`backend/app/services/evolution.py`, `backend/app/services/constants.py`)
-- [ ] **T3. Strict quote verification** (`backend/app/services/llm.py`, `facts_extraction.py`, `gaps.py`)
+- [x] **T3. Strict quote verification** (`backend/app/services/llm.py`, `facts_extraction.py`, `gaps.py`)
 - [ ] **T4. Correct graph construction and PageRank** (`relations.py`, `research_graph.py`, `routes.py`, `clustering.py`)
 - [ ] **T5. Make the gap endpoint side-effect free** (`routes.py`, new migration, `GapsPage.tsx`)
 
@@ -58,3 +58,8 @@
 - **Changed**: Added Alembic migration `a1b2c3d4e501_t1_hybrid_fts_gin.py` (generated `tsvector` column `text_tsv` on `paper_chunks`, GIN index `ix_paper_chunks_text_tsv_gin`, GIN index `ix_papers_title_abstract_tsv_gin`); updated `PaperChunk` in `models.py`; rewrote `ChatService._hybrid_retrieve` in `services/chat.py` with pgvector `<=>` (top 30), `websearch_to_tsquery` + `ts_rank_cd` (top 30), `RETRIEVAL_FUSION=rrf|convex` (`alpha=0.5`), optional `RERANKER=none|cross_encoder`, and strict no-evidence threshold guard (removed score-0 abstract fallback).
 - **Tests**: `python -m pytest tests/ -q` (`backend/`): 23 passed (including dense-only, keyword-only, RRF & convex ordering, no-evidence guard, and live DB isolation).
 - **Acceptance**: `alembic upgrade head` / `downgrade -1` / `upgrade head` succeeded; `EXPLAIN` output: `Bitmap Heap Scan on paper_chunks -> Bitmap Index Scan on ix_paper_chunks_text_tsv_gin (cost=0.00..9.92 rows=1 width=0)`. **PASS**.
+
+### T3 — Strict quote verification
+- **Changed**: Replaced `post_validate_citation` in `services/llm.py` with whitespace/case/hyphen normalization, exact normalized substring matching, and localized ordered token-sequence LCS fallback (`>= 0.9`) returning `{verified, chunk_id, match_type, score}`; updated `facts_extraction.py` to validate strictly per cited chunk and added `quote_verification_precision(project_id, db)`; updated `gaps.py` to verify all evidence items against stored chunks and exclude unverified quotes from gap scores.
+- **Tests**: `python -m pytest tests/ -q` (`backend/`): 25 passed (exact, token-sequence threshold, paraphrase rejection, wrong-chunk failure, gap score exclusion, precision metric).
+- **Acceptance**: All 4 grounding tests + full suite passed. **PASS**.

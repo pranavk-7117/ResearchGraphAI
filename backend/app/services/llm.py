@@ -14,7 +14,6 @@ import re
 from typing import Any, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
-from rapidfuzz import fuzz
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -263,15 +262,99 @@ class LLMService:
             return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def post_validate_citation(quote: str, chunk_text: str, threshold: float = 75.0) -> bool:
+def _normalize_for_quote(text: str) -> str:
+    """Normalize whitespace, case, soft hyphens, and line-break hyphenation."""
+    if not text:
+        return ""
+    # Rejoin line-break hyphenations (e.g. "infer-\nence" -> "inference")
+    normalized = re.sub(r"-\s*\n\s*", "", text)
+    # Remove soft hyphens / zero-width spaces and normalize unicode hyphens
+    normalized = re.sub(r"[\u00ad\u200b]", "", normalized)
+    normalized = re.sub(r"[\u2010-\u2015\u2212]", "-", normalized)
+    return " ".join(normalized.split()).lower()
+
+
+def _tokenize_quote(text: str) -> list[str]:
+    """Extract lowercase alphanumeric/decimal tokens in order."""
+    return re.findall(r"[a-z0-9]+(?:[.\-][a-z0-9]+)*", text)
+
+
+def _lcs_len(a: list[str], b: list[str]) -> int:
+    """Compute length of Longest Common Subsequence between token lists a and b."""
+    if not a or not b:
+        return 0
+    prev = [0] * (len(b) + 1)
+    for tok_a in a:
+        curr = [0] * (len(b) + 1)
+        for j, tok_b in enumerate(b, start=1):
+            if tok_a == tok_b:
+                curr[j] = prev[j - 1] + 1
+            else:
+                curr[j] = curr[j - 1] if curr[j - 1] >= prev[j] else prev[j]
+        prev = curr
+    return prev[-1]
+
+
+def post_validate_citation(
+    quote: str,
+    chunk_text: str,
+    chunk_id: int | None = None,
+    threshold: float = 0.9,
+) -> dict[str, Any]:
     """
-    Validate that an extracted quote actually appears in the retrieved passage chunk.
-    Uses exact substring matching or fuzzy token similarity.
+    Strictly validate that a quote appears in the specific cited chunk.
+    1. Normalize whitespace, case, and line-break hyphenation.
+    2. Require exact normalized substring match within the specific chunk.
+    3. Fallback to ordered token-sequence match requiring >= threshold (default 0.9)
+       of quote tokens in order within a localized window.
+    Returns: {verified: bool, chunk_id: int | None, match_type: str, score: float}
     """
     if not quote or not chunk_text:
-        return False
-    clean_quote = " ".join(quote.split()).lower()
-    clean_chunk = " ".join(chunk_text.split()).lower()
+        return {"verified": False, "chunk_id": chunk_id, "match_type": "none", "score": 0.0}
+
+    clean_quote = _normalize_for_quote(quote)
+    clean_chunk = _normalize_for_quote(chunk_text)
+    if not clean_quote or not clean_chunk:
+        return {"verified": False, "chunk_id": chunk_id, "match_type": "none", "score": 0.0}
+
     if clean_quote in clean_chunk:
-        return True
-    return fuzz.partial_ratio(clean_quote, clean_chunk) >= threshold
+        return {"verified": True, "chunk_id": chunk_id, "match_type": "exact", "score": 1.0}
+
+    q_tokens = _tokenize_quote(clean_quote)
+    c_tokens = _tokenize_quote(clean_chunk)
+    if not q_tokens or not c_tokens:
+        return {"verified": False, "chunk_id": chunk_id, "match_type": "none", "score": 0.0}
+
+    # Localized sliding window to avoid false positives from scattered stopwords
+    win_size = max(len(q_tokens) * 2, len(q_tokens) + 8)
+    best_ratio = 0.0
+    if len(c_tokens) <= win_size:
+        best_ratio = _lcs_len(q_tokens, c_tokens) / len(q_tokens)
+    else:
+        step = max(1, len(q_tokens) // 2)
+        for start in range(0, len(c_tokens) - win_size + 1, step):
+            lcs = _lcs_len(q_tokens, c_tokens[start : start + win_size])
+            ratio = lcs / len(q_tokens)
+            if ratio > best_ratio:
+                best_ratio = ratio
+            if best_ratio == 1.0:
+                break
+        # Check tail window
+        tail_lcs = _lcs_len(q_tokens, c_tokens[-win_size:])
+        best_ratio = max(best_ratio, tail_lcs / len(q_tokens))
+
+    best_ratio = round(float(best_ratio), 4)
+    if best_ratio >= threshold:
+        return {
+            "verified": True,
+            "chunk_id": chunk_id,
+            "match_type": "token_sequence",
+            "score": best_ratio,
+        }
+
+    return {
+        "verified": False,
+        "chunk_id": chunk_id,
+        "match_type": "none",
+        "score": best_ratio,
+    }

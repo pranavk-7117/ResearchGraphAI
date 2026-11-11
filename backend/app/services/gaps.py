@@ -20,7 +20,61 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.clients import OpenAlexClient
-from app.services.llm import LLMService
+from app.services.llm import LLMService, post_validate_citation
+
+
+def compute_gap_score(verified_supporting_count: int, verified_counter_count: int, evidence_qual: float) -> float:
+    """Deterministic gap score formula excluding unverified quotes."""
+    if verified_supporting_count <= 0:
+        return 0.1
+    raw_score = (
+        (min(verified_supporting_count, 5) * 0.1)
+        + (evidence_qual * 0.4)
+        + 0.2
+        - (verified_counter_count * 0.1)
+    )
+    return round(max(0.1, min(1.0, raw_score)), 3)
+
+
+def verify_evidence_list(
+    items: list[dict[str, Any]],
+    chunks_by_paper_id: dict[int, list[dict[str, Any]]],
+    title_to_paper_id: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Verify each evidence quote strictly against the cited paper's stored chunks."""
+    verified_items: list[dict[str, Any]] = []
+    for raw in items or []:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        quote = (item.get("quote") or "").strip()
+        pid = item.get("paper_id")
+        if pid is None and item.get("paper_title"):
+            pid = title_to_paper_id.get(str(item["paper_title"]).strip().lower())
+            if pid is not None:
+                item["paper_id"] = pid
+
+        claimed_chunk_id = item.get("chunk_id")
+        result = {"verified": False, "chunk_id": claimed_chunk_id, "match_type": "none", "score": 0.0}
+
+        if quote and pid is not None and pid in chunks_by_paper_id:
+            paper_chunks = chunks_by_paper_id[pid]
+            if claimed_chunk_id is not None:
+                target_chunk = next((c for c in paper_chunks if c["chunk_id"] == claimed_chunk_id), None)
+                if target_chunk:
+                    result = post_validate_citation(quote, target_chunk["text"], chunk_id=claimed_chunk_id)
+            else:
+                for ch in paper_chunks:
+                    res = post_validate_citation(quote, ch["text"], chunk_id=ch["chunk_id"])
+                    if res["verified"]:
+                        result = res
+                        break
+
+        item["verified"] = bool(result["verified"])
+        item["chunk_id"] = result["chunk_id"] if result["verified"] else claimed_chunk_id
+        item["match_type"] = result["match_type"]
+        verified_items.append(item)
+    return verified_items
 
 
 class SynthesizedGap(BaseModel):
@@ -72,54 +126,58 @@ class GapsService:
 
         papers = db.query(models.Paper).filter(models.Paper.id.in_(paper_ids)).all()
         paper_map = {p.id: p for p in papers}
+        title_to_paper_id = {p.title.strip().lower(): p.id for p in papers if p.title}
+
+        all_chunks = (
+            db.query(models.PaperChunk)
+            .filter(models.PaperChunk.paper_id.in_(paper_ids))
+            .order_by(models.PaperChunk.paper_id, models.PaperChunk.chunk_index)
+            .all()
+        )
+        chunks_by_paper_id: dict[int, list[dict[str, Any]]] = {}
+        for c in all_chunks:
+            chunks_by_paper_id.setdefault(c.paper_id, []).append(
+                {"chunk_id": c.id, "text": c.text, "page": c.page_start}
+            )
 
         facts = db.query(models.PaperFact).filter(models.PaperFact.paper_id.in_(paper_ids)).all()
 
-        # Collect documented limitations and future work
+        # Collect documented limitations and future work (keep verification flag)
         evidence_signals: list[dict[str, Any]] = []
         for f in facts:
             p = paper_map.get(f.paper_id)
             if not p:
                 continue
 
-            lim = f.limitations.get("value") if f.limitations else None
-            lim_quote = f.limitations.get("quote") if f.limitations else ""
-            lim_page = f.limitations.get("page") if f.limitations else 1
-
-            fut = f.future_work.get("value") if f.future_work else None
-            fut_quote = f.future_work.get("quote") if f.future_work else ""
-            fut_page = f.future_work.get("page") if f.future_work else 1
-
-            if lim:
+            for signal_type, field_obj in (("limitation", f.limitations), ("future_work", f.future_work)):
+                if not isinstance(field_obj, dict):
+                    continue
+                val = field_obj.get("value")
+                if not val:
+                    continue
                 evidence_signals.append({
                     "paper_id": p.id,
                     "title": p.title,
                     "year": p.year,
-                    "type": "limitation",
-                    "text": lim,
-                    "quote": lim_quote,
-                    "page": lim_page,
-                })
-            if fut:
-                evidence_signals.append({
-                    "paper_id": p.id,
-                    "title": p.title,
-                    "year": p.year,
-                    "type": "future_work",
-                    "text": fut,
-                    "quote": fut_quote,
-                    "page": fut_page,
+                    "type": signal_type,
+                    "text": val,
+                    "quote": field_obj.get("quote") or "",
+                    "page": field_obj.get("page") or 1,
+                    "chunk_id": field_obj.get("chunk_id"),
+                    "verified": bool(field_obj.get("verified", False)),
                 })
 
         # If insufficient signals and no LLM, return empty without padding
         if not evidence_signals or not self.llm.is_available():
             return []
 
-        # Build prompt for LLM synthesis
+        # Prefer verified signals in prompt context
+        ordered_signals = sorted(evidence_signals, key=lambda s: (not s["verified"], s["paper_id"]))
         context_items = []
-        for s in evidence_signals[:15]:
+        for s in ordered_signals[:15]:
             context_items.append(
-                f"- [{s['title']} ({s['year'] or 'n.d.'}) - Page {s['page']}]: {s['type'].upper()}: {s['text']} (Quote: \"{s['quote']}\")"
+                f"- [paper_id={s['paper_id']}, chunk_id={s['chunk_id']}, {s['title']} ({s['year'] or 'n.d.'}) - Page {s['page']}]: "
+                f"{s['type'].upper()}: {s['text']} (Quote: \"{s['quote']}\")"
             )
         context_str = "\n".join(context_items)
 
@@ -156,20 +214,25 @@ class GapsService:
         created_gaps: list[models.ResearchGap] = []
 
         for g in batch.gaps:
-            # 1. Transparent Score Calculation
-            num_evidence = len(g.supporting_evidence)
-            num_counter = len(g.counter_evidence)
-            evidence_qual = 0.85 if any(e.get("quote") for e in g.supporting_evidence) else 0.60
-            
-            # Formula: (num_evidence * 0.4) + (evidence_qual * 0.4) - (num_counter * 0.15)
-            raw_score = (min(num_evidence, 5) * 0.1) + (evidence_qual * 0.4) + 0.2 - (num_counter * 0.1)
-            final_score = round(max(0.1, min(1.0, raw_score)), 3)
+            # 1. Verify quotes strictly against stored chunks (keep unverified flagged, exclude from score)
+            sup_ev = verify_evidence_list(g.supporting_evidence, chunks_by_paper_id, title_to_paper_id)
+            cnt_ev = verify_evidence_list(g.counter_evidence, chunks_by_paper_id, title_to_paper_id)
+
+            verified_sup = [e for e in sup_ev if e.get("verified") is True]
+            verified_cnt = [e for e in cnt_ev if e.get("verified") is True]
+
+            num_evidence = len(verified_sup)
+            num_counter = len(verified_cnt)
+            evidence_qual = 0.85 if num_evidence > 0 else 0.0
+            final_score = compute_gap_score(num_evidence, num_counter, evidence_qual)
 
             score_components = {
-                "formula": "0.4 * evidence_quality + 0.4 * supporting_count_scaled + 0.2 - 0.1 * counter_count",
-                "formula_version": "1.0",
+                "formula": "min(1.0, max(0.1, min(verified_supporting_count, 5)*0.1 + evidence_quality*0.4 + 0.2 - verified_counter_count*0.1)) if verified_supporting_count > 0 else 0.1",
+                "formula_version": "1.1",
                 "evidence_quality": evidence_qual,
                 "supporting_papers_count": num_evidence,
+                "total_supporting_quotes": len(sup_ev),
+                "unverified_quotes_excluded": len(sup_ev) - num_evidence,
                 "counter_evidence_count": num_counter,
                 "calculated_strength": final_score,
             }
@@ -183,13 +246,13 @@ class GapsService:
                 gap_statement=g.gap_statement,
                 why_it_matters=g.why_it_matters,
                 gap_type=g.gap_type,
-                supporting_evidence=g.supporting_evidence,
-                counter_evidence=g.counter_evidence,
+                supporting_evidence=sup_ev,
+                counter_evidence=cnt_ev,
                 corpus_cannot_establish=g.corpus_cannot_establish,
                 suggested_research_question=g.suggested_research_question,
                 suggested_validation=g.suggested_validation,
                 score_components=score_components,
-                formula_version="1.0",
+                formula_version="1.1",
                 evidence_strength=final_score,
                 external_verification=external_info,
                 status="candidate",
