@@ -45,6 +45,7 @@ class JobService:
         project_id: int | None = None,
         initial_stage: str = "queued",
     ) -> models.ResearchJob:
+        now = utc_now()
         job = models.ResearchJob(
             id=str(uuid.uuid4()),
             project_id=project_id,
@@ -55,6 +56,8 @@ class JobService:
             per_paper_results={},
             warnings=[],
             errors=[],
+            created_at=now,
+            updated_at=now,
         )
         db.add(job)
         db.commit()
@@ -97,6 +100,8 @@ class JobService:
                 JobService._run_discovery_job(db, job)
             elif job.type == "processing":
                 JobService._run_processing_job(db, job)
+            elif job.type == "gaps_detect":
+                JobService._run_gaps_detect_job(db, job)
             else:
                 job.status = "failed"
                 job.errors.append(f"Unknown job type: {job.type}")
@@ -155,6 +160,28 @@ class JobService:
         job.stage = "candidates_ready"
         job.progress = 1.0
         job.per_paper_results = {"discovered_count": len(candidates)}
+        db.commit()
+
+    @staticmethod
+    def _run_gaps_detect_job(db: Session, job: models.ResearchJob) -> None:
+        if not job.project_id:
+            job.status = "failed"
+            job.errors.append("Gap detection job missing project_id")
+            db.commit()
+            return
+
+        job.status = "analysing"
+        job.stage = "detecting_research_gaps"
+        job.progress = 0.25
+        db.commit()
+
+        gaps_service = GapsService()
+        created = gaps_service.detect_gaps(db, project_id=job.project_id)
+
+        job.status = "completed"
+        job.stage = "gaps_ready"
+        job.progress = 1.0
+        job.per_paper_results = {"gaps_detected": len(created)}
         db.commit()
 
     @staticmethod

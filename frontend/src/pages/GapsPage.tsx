@@ -12,11 +12,12 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, Gap, Project } from "../lib/api";
+import { api, Gap, Job, Project } from "../lib/api";
 
 export function GapsPage({ project }: { project: Project | null }) {
   const [gaps, setGaps] = useState<Gap[]>([]);
   const [loading, setLoading] = useState(false);
+  const [detectJob, setDetectJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -31,18 +32,38 @@ export function GapsPage({ project }: { project: Project | null }) {
     setError(null);
     try {
       const data = await api.gaps.get(project.id);
-      const seen = new Set<string>();
-      const unique = data.filter((g) => {
-        const key = (g.gap_statement || "").trim().toLowerCase();
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      setGaps(unique);
+      setGaps(data);
     } catch (err: any) {
       setError(err?.message || "Failed to load candidate research gaps.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function triggerGapDetection() {
+    if (!project) return;
+    setError(null);
+    try {
+      const job = await api.gaps.detect(project.id);
+      setDetectJob(job);
+      const poll = setInterval(async () => {
+        try {
+          const updated = await api.jobs.get(job.id);
+          setDetectJob(updated);
+          if (updated.status === "completed" || updated.status === "failed" || updated.status === "completed_with_warnings") {
+            clearInterval(poll);
+            if (updated.status === "failed") {
+              setError(updated.errors?.[0] || "Gap detection job failed.");
+            } else {
+              await loadGaps();
+            }
+          }
+        } catch {
+          clearInterval(poll);
+        }
+      }, 1500);
+    } catch (err: any) {
+      setError(err?.message || "Failed to enqueue gap detection.");
     }
   }
 
@@ -80,24 +101,57 @@ export function GapsPage({ project }: { project: Project | null }) {
             documented in your indexed corpus. Never claims total absence in scientific literature.
           </p>
         </div>
-        <button
-          onClick={loadGaps}
-          disabled={loading}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "8px 14px",
-            background: "#f1f5f9",
-            border: "1px solid #cbd5e1",
-            borderRadius: 6,
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
-          <RefreshCw size={14} /> Refresh Gaps
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={loadGaps}
+            disabled={loading}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: "#f1f5f9",
+              border: "1px solid #cbd5e1",
+              borderRadius: 6,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
+          <button
+            onClick={triggerGapDetection}
+            disabled={loading || (detectJob?.status === "pending" || detectJob?.status === "analysing" || detectJob?.status === "processing")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "8px 14px",
+              background: "#2563eb",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            <Sparkles size={14} /> Detect Gaps
+          </button>
+        </div>
       </header>
+
+      {detectJob && (detectJob.status !== "completed" || detectJob.progress < 1) && (
+        <div style={{ padding: 14, background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#1e40af", marginBottom: 6 }}>
+            <span><strong>Gap Detection Job:</strong> {detectJob.stage} ({detectJob.status})</span>
+            <span>{Math.round((detectJob.progress || 0) * 100)}%</span>
+          </div>
+          <div style={{ height: 6, background: "#dbeafe", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.round((detectJob.progress || 0) * 100)}%`, background: "#2563eb", transition: "width 0.3s" }} />
+          </div>
+        </div>
+      )}
 
       {error && (
         <div style={{ padding: 16, background: "#fee2e2", color: "#991b1b", borderRadius: 8, marginBottom: 20 }}>

@@ -338,10 +338,14 @@ class ClusterMember(Base):
 
 class ResearchGap(Base):
     __tablename__ = "research_gaps"
+    __table_args__ = (
+        UniqueConstraint("project_id", "corpus_version", "statement_hash", name="uq_research_gaps_proj_ver_hash"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("research_projects.id", ondelete="CASCADE"), index=True)
     corpus_version: Mapped[int] = mapped_column(Integer, default=1)
+    statement_hash: Mapped[str] = mapped_column(String(64), index=True)
     gap_statement: Mapped[str] = mapped_column(Text)
     why_it_matters: Mapped[str] = mapped_column(Text)
     gap_type: Mapped[str] = mapped_column(String(100))

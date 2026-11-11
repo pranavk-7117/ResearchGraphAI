@@ -483,13 +483,27 @@ def get_evolution(
     )
 
 
+@router.post("/projects/{project_id}/gaps/detect", response_model=schemas.JobOut)
+def detect_gaps_job(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Enqueue durable background job to detect evidence-backed research gaps."""
+    project = verify_project_ownership(project_id, user, db)
+    job = JobService.create_job(db, job_type="gaps_detect", project_id=project.id)
+    thread = threading.Thread(target=JobService.execute_job, args=(job.id,), daemon=True)
+    thread.start()
+    return schemas.JobOut.model_validate(job)
+
+
 @router.get("/projects/{project_id}/gaps", response_model=list[schemas.GapOut])
 def get_gaps(
     project_id: int,
     user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Retrieve evidence-backed research gaps with formula scores and external validation."""
+    """Read-only retrieval of persisted candidate research gaps (zero side effects)."""
     project = verify_project_ownership(project_id, user, db)
 
     gaps = (
@@ -498,32 +512,6 @@ def get_gaps(
         .order_by(models.ResearchGap.evidence_strength.desc())
         .all()
     )
-
-    # If no gaps computed yet, run detection
-    if not gaps:
-        gaps_service = GapsService()
-        gaps = gaps_service.detect_gaps(db, project.id)
-
-    # Deduplicate gaps (keeping highest evidence score) and clean up duplicate rows in DB
-    seen_statements = set()
-    unique_gaps = []
-    dup_ids = []
-    for g in gaps:
-        stmt_key = (g.gap_statement or "").strip().lower()
-        if not stmt_key:
-            continue
-        if stmt_key in seen_statements:
-            dup_ids.append(g.id)
-        else:
-            seen_statements.add(stmt_key)
-            unique_gaps.append(g)
-
-    if dup_ids:
-        try:
-            db.query(models.ResearchGap).filter(models.ResearchGap.id.in_(dup_ids)).delete(synchronize_session=False)
-            db.commit()
-        except Exception:
-            db.rollback()
 
     return [
         schemas.GapOut(
@@ -542,7 +530,7 @@ def get_gaps(
             user_feedback=g.user_feedback,
             created_at=g.created_at,
         )
-        for g in unique_gaps
+        for g in gaps
     ]
 
 

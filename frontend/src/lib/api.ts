@@ -387,6 +387,8 @@ export const api = {
   },
   gaps: {
     get: (projectId: number) => request<Gap[]>(`/projects/${projectId}/gaps`),
+    detect: (projectId: number) =>
+      request<Job>(`/projects/${projectId}/gaps/detect`, { method: "POST" }),
     feedback: (gapId: number, feedback: string) =>
       request<{ ok: boolean; feedback: string }>(`/gaps/${gapId}/feedback`, {
         method: "POST",

@@ -10,7 +10,7 @@
 - [x] **T2. Fix the Evolution service** (`backend/app/services/evolution.py`, `backend/app/services/constants.py`)
 - [x] **T3. Strict quote verification** (`backend/app/services/llm.py`, `facts_extraction.py`, `gaps.py`)
 - [x] **T4. Correct graph construction and PageRank** (`relations.py`, `research_graph.py`, `routes.py`, `clustering.py`)
-- [ ] **T5. Make the gap endpoint side-effect free** (`routes.py`, new migration, `GapsPage.tsx`)
+- [x] **T5. Make the gap endpoint side-effect free** (`routes.py`, new migration, `GapsPage.tsx`)
 
 ### PHASE B — Hand-built Data Structures and Discrete Math
 - [ ] **T6. DS-1: `backend/app/dsa/` package, zero third-party graph libraries**
@@ -73,3 +73,8 @@
 - **Changed**: Added Alembic migration `b2c3d4e5f602_t4_directed_and_graph_cache.py` (`directed` boolean on `paper_relations`, `graph_analytics_cache` table); added batched L2-normalized mean chunk embedding helper `get_paper_embeddings` in `embeddings.py` used by `relations.py` & `clustering.py`; replaced O(N^2) pairwise loop & N+1 queries with O(1) lookup dicts, strict `fuzz.ratio >= 95` (±1 year) citation resolution, and pgvector LATERAL mutual k-NN (`SIM_K=4`, stored undirected `source_id < target_id`, `directed=False`); restricted PageRank strictly to citation DAG (`RELATION_CITES` only) with `(project_id, corpus_version)` caching.
 - **Tests**: `python -m pytest tests/ -q`: 31 passed (including L2 mean embedding test, PageRank invariance under added/reversed similarity edges, strict citation fuzz test, and 40-paper bounded SQL query count <= 15).
 - **Acceptance**: `alembic upgrade/downgrade/upgrade` succeeded; 40-paper relation build bounded to <= 15 SQL queries. **PASS**.
+
+### T5 — Make the gap endpoint side-effect free
+- **Changed**: Added Alembic migration `c3d4e5f60703_t5_gap_statement_hash_unique.py` (`statement_hash` column + unique constraint `uq_research_gaps_proj_ver_hash` on `(project_id, corpus_version, statement_hash)`); made `GET /projects/{id}/gaps` strictly read-only; added `POST /projects/{id}/gaps/detect` enqueuing `gaps_detect` job via `JobService`; deduplicated gaps at insert time in `gaps.py`; updated `GapsPage.tsx` with Detect Gaps button & live job progress polling.
+- **Tests**: `python -m pytest tests/ -q`: 34 passed; `npm --prefix frontend run build` passed.
+- **Acceptance**: `alembic upgrade/downgrade/upgrade` succeeded; `test_get_gaps_is_strictly_read_only`, `test_post_gaps_detect_enqueues_job`, and DB unique constraint `IntegrityError` test all passed. **PASS**.

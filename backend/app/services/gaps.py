@@ -13,6 +13,7 @@ Includes:
 - Rejection of padding: returns empty list if no evidence exists
 """
 
+import hashlib
 import math
 from typing import Any
 from pydantic import BaseModel, Field
@@ -212,8 +213,22 @@ class GapsService:
             return []
 
         created_gaps: list[models.ResearchGap] = []
+        existing_hashes = {
+            r[0]
+            for r in db.query(models.ResearchGap.statement_hash)
+            .filter(
+                models.ResearchGap.project_id == project_id,
+                models.ResearchGap.corpus_version == project.corpus_version,
+            )
+            .all()
+        }
 
         for g in batch.gaps:
+            stmt_hash = hashlib.sha256(g.gap_statement.strip().lower().encode("utf-8")).hexdigest()
+            if stmt_hash in existing_hashes:
+                continue
+            existing_hashes.add(stmt_hash)
+
             # 1. Verify quotes strictly against stored chunks (keep unverified flagged, exclude from score)
             sup_ev = verify_evidence_list(g.supporting_evidence, chunks_by_paper_id, title_to_paper_id)
             cnt_ev = verify_evidence_list(g.counter_evidence, chunks_by_paper_id, title_to_paper_id)
@@ -243,6 +258,7 @@ class GapsService:
             gap_row = models.ResearchGap(
                 project_id=project_id,
                 corpus_version=project.corpus_version,
+                statement_hash=stmt_hash,
                 gap_statement=g.gap_statement,
                 why_it_matters=g.why_it_matters,
                 gap_type=g.gap_type,
