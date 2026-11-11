@@ -181,27 +181,28 @@ class LLMService:
                     "temperature": 0.1,
                     "max_tokens": 4000,
                 }
-                try:
-                    resp = client.post(
-                        "https://api.groq.com/openai/v1/chat/completions",
-                        headers=headers,
-                        json=payload,
-                    )
-                    if resp.status_code == 429:
-                        import time as _t
-                        _t.sleep(2.5)
+                for attempt in range(3):
+                    try:
                         resp = client.post(
                             "https://api.groq.com/openai/v1/chat/completions",
                             headers=headers,
                             json=payload,
                         )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        self.groq_model = model_name
-                        return data["choices"][0]["message"]["content"]
-                    last_error = f"Groq API error ({resp.status_code}) for model '{model_name}': {resp.text}"
-                except Exception as ex:
-                    last_error = f"Groq request exception for model '{model_name}': {ex}"
+                        if resp.status_code == 429:
+                            import time as _t
+                            wait_m = re.search(r"try again in ([0-9.]+)s", resp.text)
+                            delay = min(20.0, float(wait_m.group(1)) + 0.5) if wait_m else (3.5 * (attempt + 1))
+                            _t.sleep(delay)
+                            continue
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            self.groq_model = model_name
+                            return data["choices"][0]["message"]["content"]
+                        last_error = f"Groq API error ({resp.status_code}) for model '{model_name}': {resp.text}"
+                        break
+                    except Exception as ex:
+                        last_error = f"Groq request exception for model '{model_name}': {ex}"
+                        break
 
         raise LLMProviderUnavailableError(last_error)
 

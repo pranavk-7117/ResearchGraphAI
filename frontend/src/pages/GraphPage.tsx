@@ -169,7 +169,7 @@ export function GraphPage({ project }: { project: Project | null }) {
   const [enabledLayers, setEnabledLayers] = useState<{ citation: boolean; coupling: boolean; semantic: boolean }>({
     citation: true,
     coupling: true,
-    semantic: false,
+    semantic: true,
   });
   const [minEdgeWeight, setMinEdgeWeight] = useState<number>(0.0);
   const [egoHops, setEgoHops] = useState<"all" | "1" | "2">("all");
@@ -817,12 +817,37 @@ export function GraphPage({ project }: { project: Project | null }) {
               nodeId="id"
               nodeVal={getNodeVal}
               nodeColor={getNodeColor}
-              linkColor={(link: any) =>
-                link.relation_type === "cites" ? "#0f766e" : link.relation_type === "coupling" ? "#d97706" : "#8b5cf6"
-              }
-              linkWidth={(link: any) => (link.relation_type === "cites" ? 1.8 : 1.3)}
+              linkColor={(link: any) => {
+                const srcId = Number(typeof link.source === "object" ? link.source.id : link.source);
+                const tgtId = Number(typeof link.target === "object" ? link.target.id : link.target);
+                const isIncident = selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id);
+                if (selectedNode && !isIncident) {
+                  return link.relation_type === "cites"
+                    ? "rgba(5, 150, 105, 0.22)"
+                    : link.relation_type === "coupling"
+                      ? "rgba(217, 119, 6, 0.20)"
+                      : "rgba(99, 102, 241, 0.16)";
+                }
+                if (link.relation_type === "cites") return "#059669";
+                if (link.relation_type === "coupling") return "#d97706";
+                return "#6366f1";
+              }}
+              linkWidth={(link: any) => {
+                const srcId = Number(typeof link.source === "object" ? link.source.id : link.source);
+                const tgtId = Number(typeof link.target === "object" ? link.target.id : link.target);
+                const isIncident = selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id);
+                const base = link.relation_type === "cites" ? 2.2 : link.relation_type === "coupling" ? 1.8 : 1.4;
+                return isIncident ? base * 1.7 : base;
+              }}
+              linkLabel={(link: any) => {
+                if (link.relation_type === "cites") return "Verified Citation (Metadata)";
+                if (link.relation_type === "coupling") {
+                  return `Bibliographic Coupling · Shared Refs: ${link.shared_references || 0} (Jaccard ${(link.score || 0).toFixed(2)})`;
+                }
+                return `Semantic Similarity (Cosine ${(link.score || 0).toFixed(2)})`;
+              }}
               linkLineDash={(link: any) =>
-                link.relation_type === "cites" ? undefined : link.relation_type === "coupling" ? [2, 2] : [4, 4]
+                link.relation_type === "cites" ? undefined : link.relation_type === "coupling" ? [4, 3] : [2, 3]
               }
               linkDirectionalArrowLength={(link: any) => (link.relation_type === "cites" ? 6 : 0)}
               linkDirectionalArrowRelPos={0.8}
@@ -1070,18 +1095,22 @@ export function GraphPage({ project }: { project: Project | null }) {
             }}
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#334155" }}>
-              <span style={{ width: 16, height: 2.5, background: "#0f766e", display: "inline-block", borderRadius: 1 }} />
-              Verified Citation (Metadata)
+              <span style={{ width: 18, height: 2.5, background: "#059669", display: "inline-block", borderRadius: 1 }} />
+              Citation (Solid Green)
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#334155" }}>
-              <span style={{ width: 16, height: 2, borderTop: "2px dashed #8b5cf6", display: "inline-block" }} />
-              Inferred Semantic Similarity
+              <span style={{ width: 18, height: 2, borderTop: "2.5px dashed #d97706", display: "inline-block" }} />
+              Bib. Coupling (Dashed Amber)
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#334155" }}>
+              <span style={{ width: 18, height: 2, borderTop: "2.5px dotted #6366f1", display: "inline-block" }} />
+              Semantic Similarity (Dotted Indigo)
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#64748b" }}>
               <span>Size:</span>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#94a3b8", display: "inline-block" }} />
               <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#94a3b8", display: "inline-block" }} />
-              Lower / Higher Influence
+              Influence
             </span>
           </div>
         </div>

@@ -153,6 +153,8 @@ export type EvolutionPhase = {
 export type EvolutionTransitionItem = {
   phase_from?: number;
   phase_to?: number;
+  phase_from_count?: number;
+  phase_to_count?: number;
   badge?: string;
   year_range: string;
   title: string;

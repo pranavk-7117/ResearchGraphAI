@@ -367,16 +367,17 @@ class JobService:
                         )
                         db.add(chunk_row)
 
-                # Extract structured facts idempotently (skip if already extracted)
+                # Extract structured facts idempotently (retry if previous attempt errored or was unconfigured)
                 existing_fact = (
                     db.query(models.PaperFact)
                     .filter(models.PaperFact.paper_id == paper.id)
                     .first()
                 )
-                if not existing_fact:
+                if not existing_fact or existing_fact.extraction_model in ("error", "unconfigured"):
                     pp.processing_status = "extracting_facts"
                     db.commit()
                     fact_service.extract_paper_facts(db, paper_id=paper.id, project_id=project.id)
+                    time.sleep(0.8)
 
                 pp.processing_status = "completed"
                 per_paper_results[str(paper.id)] = {"status": "success", "abstract_only": pp.abstract_only}

@@ -523,11 +523,13 @@ class EvolutionService:
             f = facts_map.get(p.id)
             method_val = f.method.get("value") if f and isinstance(f.method, dict) else None
             lim_val = f.limitations.get("value") if f and isinstance(f.limitations, dict) else None
+            fw_val = f.future_work.get("value") if f and isinstance(f.future_work, dict) else None
             contrib_val = (
                 f.claimed_contributions.get("value")
                 if f and isinstance(f.claimed_contributions, dict)
                 else None
             )
+            gap_items = [x for x in (lim_val, fw_val) if x]
 
             return {
                 "id": p.id,
@@ -542,7 +544,7 @@ class EvolutionService:
                 "url": p.original_url or (f"https://doi.org/{p.doi}" if p.doi else None),
                 "topic_tag": paper_cluster_map.get(p.id),
                 "key_contribution": contrib_val or method_val,
-                "gaps_solved": [lim_val] if lim_val else [],
+                "gaps_solved": gap_items,
                 "new_aspects": [],
             }
 
@@ -595,18 +597,75 @@ class EvolutionService:
         for idx in range(len(phases_out) - 1):
             ph_a = phases_out[idx]
             ph_b = phases_out[idx + 1]
-            combined = list({
-                p.id: p
-                for p in (phase_papers_by_num[ph_a["phase_num"]] + phase_papers_by_num[ph_b["phase_num"]])
-            }.values())
+            list_a = phase_papers_by_num[ph_a["phase_num"]]
+            list_b = phase_papers_by_num[ph_b["phase_num"]]
+            pids_a = {p.id for p in list_a}
+            pids_b = {p.id for p in list_b}
+            combined = list({p.id: p for p in (list_a + list_b)}.values())
+
+            methods_a = {
+                facts_map[p.id].method["value"]
+                for p in list_a
+                if p.id in facts_map and isinstance(facts_map[p.id].method, dict) and facts_map[p.id].method.get("value")
+            }
+            methods_b = {
+                facts_map[p.id].method["value"]
+                for p in list_b
+                if p.id in facts_map and isinstance(facts_map[p.id].method, dict) and facts_map[p.id].method.get("value")
+            }
+            datasets_a = {
+                facts_map[p.id].dataset["value"]
+                for p in list_a
+                if p.id in facts_map and isinstance(facts_map[p.id].dataset, dict) and facts_map[p.id].dataset.get("value")
+            }
+            datasets_b = {
+                facts_map[p.id].dataset["value"]
+                for p in list_b
+                if p.id in facts_map and isinstance(facts_map[p.id].dataset, dict) and facts_map[p.id].dataset.get("value")
+            }
+
+            cross_cites = [
+                r for r in citation_edges
+                if (r.target_id in pids_a and r.source_id in pids_b) or (r.source_id in pids_a and r.target_id in pids_b)
+            ]
+            cross_sims = [
+                r for r in sim_edges
+                if (r.source_id in pids_a and r.target_id in pids_b) or (r.target_id in pids_a and r.source_id in pids_b)
+            ]
+
+            key_changes: list[str] = []
+            new_methods = sorted(methods_b - methods_a)
+            if new_methods:
+                key_changes.append(f"New methods in Phase {ph_b['phase_num']}: {', '.join(new_methods[:3])}")
+            new_datasets = sorted(datasets_b - datasets_a)
+            if new_datasets:
+                key_changes.append(f"New benchmarks/datasets: {', '.join(new_datasets[:3])}")
+            if ph_a["title"] != ph_b["title"]:
+                key_changes.append(f"Primary cluster shift: '{ph_a['title']}' -> '{ph_b['title']}'")
+            else:
+                key_changes.append(
+                    f"Output expanded from {ph_a['paper_count']} ({ph_a['start_year']}–{ph_a['end_year']}) "
+                    f"to {ph_b['paper_count']} paper(s) ({ph_b['start_year']}–{ph_b['end_year']})"
+                )
+            if cross_cites:
+                key_changes.append(f"{len(cross_cites)} verified citation link(s) bridge Phase {ph_a['phase_num']} and Phase {ph_b['phase_num']}")
+            elif cross_sims:
+                key_changes.append(f"{len(cross_sims)} semantic similarity link(s) (cosine >= 0.55) bridge these phases")
+
+            desc = (
+                f"Phase {ph_a['phase_num']} ({ph_a['paper_count']} paper(s), {ph_a['start_year']}–{ph_a['end_year']}) -> "
+                f"Phase {ph_b['phase_num']} ({ph_b['paper_count']} paper(s), {ph_b['start_year']}–{ph_b['end_year']})."
+            )
             transitions_out.append({
                 "phase_from": ph_a["phase_num"],
                 "phase_to": ph_b["phase_num"],
-                "badge": f"Phase {ph_a['phase_num']} -> Phase {ph_b['phase_num']} ({ph_a['start_year']}–{ph_b['end_year']})",
+                "phase_from_count": ph_a["paper_count"],
+                "phase_to_count": ph_b["paper_count"],
+                "badge": f"Phase {ph_a['phase_num']} ({ph_a['paper_count']}p) -> Phase {ph_b['phase_num']} ({ph_b['paper_count']}p) · {ph_a['start_year']}–{ph_b['end_year']}",
                 "year_range": f"{ph_a['start_year']}–{ph_b['end_year']}",
                 "title": f"{ph_a['title']} -> {ph_b['title']}",
-                "description": None,
-                "key_changes": [],
+                "description": desc,
+                "key_changes": key_changes,
                 "paper_count": len(combined),
                 "papers": [serialize_paper(p) for p in combined],
             })

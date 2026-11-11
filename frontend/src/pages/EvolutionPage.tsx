@@ -324,7 +324,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
       {/* TAB 1: RESEARCH TIMELINE                                                  */}
       {/* ========================================================================= */}
       {activeTab === "timeline" && (
-        <div style={{ display: "grid", gridTemplateColumns: selectedPhaseView === "Paper Lineage Stream" ? "1fr" : "1fr 340px", gap: 20, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: selectedPhaseView === "Paper Lineage Stream" ? "1fr" : "minmax(0, 1fr) 340px", gap: 20, alignItems: "start" }}>
           {/* Main Timeline Column */}
           <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
             {/* Citation Backbone (SPC Main-Path Analysis) */}
@@ -489,9 +489,9 @@ export function EvolutionPage({ project }: { project: Project | null }) {
 
               {/* VIEW 2: Annual Milestones Timeline */}
               {selectedPhaseView === "Annual Milestones" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "10px 4px" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(6, annualMilestones.length)}, 1fr)`, gap: 10 }}>
-                    {annualMilestones.map((m, idx) => (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "10px 4px", minWidth: 0 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(145px, 1fr))", gap: 10, minWidth: 0 }}>
+                    {annualMilestones.map((m) => (
                       <div
                         key={m.year}
                         onClick={() => {
@@ -507,14 +507,15 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                           padding: 12,
                           cursor: "pointer",
                           textAlign: "center",
+                          minWidth: 0,
                           transition: "all 0.15s ease",
                         }}
                       >
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#2563eb" }}>{m.year}</div>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: "#0f172a", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {m.top_theme}
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#0f172a", marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={m.top_theme || m.milestone_title}>
+                          {m.top_theme || m.milestone_title}
                         </div>
-                        <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{m.paper_count} papers</div>
+                        <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{m.paper_count} {m.paper_count === 1 ? "paper" : "papers"}</div>
                       </div>
                     ))}
                   </div>
@@ -872,7 +873,10 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                               }}
                               title="Click to view all papers used in this transition"
                             >
-                              {item.paper_count} papers <ChevronRight size={12} />
+                              {item.phase_from_count !== undefined && item.phase_to_count !== undefined
+                                ? `${item.phase_from_count} + ${item.phase_to_count} = ${item.paper_count} papers`
+                                : `${item.paper_count} papers`}{" "}
+                              <ChevronRight size={12} />
                             </button>
                           </div>
 
@@ -895,14 +899,20 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                               <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 6 }}>
                                 Key changes
                               </div>
-                              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
-                                {item.key_changes.map((kc, kIdx) => (
-                                  <li key={kIdx} style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, color: "#334155", lineHeight: 1.35 }}>
-                                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10b981", marginTop: 5, flexShrink: 0 }} />
-                                    <span>{kc}</span>
-                                  </li>
-                                ))}
-                              </ul>
+                              {item.key_changes && item.key_changes.length > 0 ? (
+                                <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+                                  {item.key_changes.map((kc, kIdx) => (
+                                    <li key={kIdx} style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, color: "#334155", lineHeight: 1.35 }}>
+                                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#10b981", marginTop: 5, flexShrink: 0 }} />
+                                      <span>{kc}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                                  No extracted method/dataset diffs across this boundary yet.
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>

@@ -82,6 +82,11 @@ class FactExtractionService:
 
         if not self.llm.is_available():
             # If LLM is not configured, record minimal placeholder fact showing provider missing
+            db.query(models.PaperFact).filter(
+                models.PaperFact.paper_id == paper_id,
+                models.PaperFact.extraction_model.in_(("error", "unconfigured")),
+            ).delete(synchronize_session=False)
+
             fact_row = models.PaperFact(
                 paper_id=paper_id,
                 project_id=project_id,
@@ -93,11 +98,20 @@ class FactExtractionService:
             db.commit()
             return fact_row
 
-        # Build context prompt
+        # Build compact context prompt (prioritize Intro/Methods/Limitations/Conclusion, stay within ITPM budgets)
+        selected_passages = passages[:6]
+        if len(passages) > 6:
+            lim_passages = [
+                p for p in passages[6:]
+                if any(k in (p.get("section") or "").lower() or k in (p.get("text") or "").lower()
+                       for k in ("limit", "future", "conclus", "discuss", "challenge"))
+            ]
+            selected_passages = (passages[:4] + lim_passages[:3])[:6]
+
         context_lines = []
-        for p in passages[:12]:
+        for p in selected_passages:
             chunk_header = f"[Chunk {p['chunk_id'] or 'Abstract'} - Page {p['page']} - Section: {p['section']}]"
-            context_lines.append(f"{chunk_header}\n{p['text']}")
+            context_lines.append(f"{chunk_header}\n{p['text'][:700]}")
         context_str = "\n\n".join(context_lines)
 
         prompt = (
@@ -123,6 +137,11 @@ class FactExtractionService:
             )
         except Exception as e:
             # Failed to extract facts from LLM
+            db.query(models.PaperFact).filter(
+                models.PaperFact.paper_id == paper_id,
+                models.PaperFact.extraction_model.in_(("error", "unconfigured")),
+            ).delete(synchronize_session=False)
+
             fact_row = models.PaperFact(
                 paper_id=paper_id,
                 project_id=project_id,
@@ -174,6 +193,11 @@ class FactExtractionService:
                 "match_type": verification["match_type"],
                 "verification_score": verification["score"],
             }
+
+        db.query(models.PaperFact).filter(
+            models.PaperFact.paper_id == paper_id,
+            models.PaperFact.extraction_model.in_(("error", "unconfigured")),
+        ).delete(synchronize_session=False)
 
         fact_row = models.PaperFact(
             paper_id=paper_id,

@@ -190,3 +190,32 @@ def test_citation_backbone_sparse_warning_and_intent_pruning_skip(monkeypatch):
     assert bb["intent_pruning_status"] == "skipped_no_full_text_chunks"
     assert [n["id"] for n in bb["global_path"]] == [1, 2]
     assert "Sparse citation graph" in bb["message"]
+
+
+def test_phase_transitions_populate_factual_key_changes_and_matching_counts():
+    """Phase transitions must expose matching phase_from/to counts and factual key_changes from facts/relations."""
+    papers = [
+        MagicMock(id=1, title="Early Study", year=2018, authors=[], abstract="A1", venue=None, citation_count=10, doi=None, original_url=None, source_name="openalex"),
+        MagicMock(id=2, title="Mid Study", year=2022, authors=[], abstract="A2", venue=None, citation_count=5, doi=None, original_url=None, source_name="openalex"),
+        MagicMock(id=3, title="Recent Study", year=2025, authors=[], abstract="A3", venue=None, citation_count=2, doi=None, original_url=None, source_name="arxiv"),
+    ]
+    facts = [
+        MagicMock(paper_id=1, method={"value": "Thresholding"}, dataset={"value": "Bench-A"}, limitations={"value": "Drift"}, future_work=None, claimed_contributions={"value": "First baseline"}),
+        MagicMock(paper_id=2, method={"value": "Random Forest"}, dataset={"value": "Bench-B"}, limitations={"value": "Small cohort"}, future_work=None, claimed_contributions={"value": "Gait classification"}),
+        MagicMock(paper_id=3, method={"value": "CNN"}, dataset={"value": "Bench-B"}, limitations=None, future_work={"value": "Longitudinal trial"}, claimed_contributions={"value": "Deep sensor fusion"}),
+    ]
+    relations = [MagicMock(source_id=2, target_id=1, relation_type=RELATION_CITES, score=1.0)]
+
+    db = _make_mock_db(papers, relations, facts=facts)
+    svc = EvolutionService()
+    svc.llm.is_available = MagicMock(return_value=False)
+
+    res = svc.generate_evolution(db, project_id=1)
+    assert len(res["transitions"]) >= 1
+    tr = res["transitions"][0]
+    assert tr["phase_from_count"] == res["phases"][0]["paper_count"]
+    assert tr["phase_to_count"] == res["phases"][1]["paper_count"]
+    assert tr["paper_count"] == tr["phase_from_count"] + tr["phase_to_count"]
+    assert len(tr["key_changes"]) >= 1
+    assert any("New methods" in kc for kc in tr["key_changes"])
+    assert res["paper_stream"][-1]["gaps_solved"] == ["Longitudinal trial"]
