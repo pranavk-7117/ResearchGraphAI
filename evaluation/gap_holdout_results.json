@@ -1,0 +1,528 @@
+{
+  "cutoff_year_T": 2023,
+  "validation_window_H": 3,
+  "k": 3,
+  "num_topics": 5,
+  "overall_gap_precision_at_k": 0.643,
+  "overall_random_precision_at_k": 0.357,
+  "total_predicted_checked": 14,
+  "total_predicted_addressed_post_t": 9,
+  "total_random_checked": 14,
+  "total_random_addressed_post_t": 5,
+  "caveats": [
+    "Small sample size (5 topics, pre-T abstract-only extraction capped at 18 papers per topic).",
+    "Post-T confirmation checks OpenAlex title/abstract keyword co-occurrence + cosine >= 0.45 rather than human expert peer review.",
+    "Empty cells can reflect negative/unpublished results or terminology drift across years rather than true scientific novelty."
+  ],
+  "topics": [
+    {
+      "id": "eval-1",
+      "topic": "perovskite solar cell degradation mechanisms",
+      "domain": "Materials Science & Energy",
+      "pre_t_papers": 19,
+      "extracted_pairs": 18,
+      "matrix_methods": 18,
+      "matrix_tasks": 17,
+      "predicted_precision_at_k": 0.667,
+      "random_precision_at_k": 0.0,
+      "predicted_gaps": [
+        {
+          "method": "degradation factor analysis",
+          "task": "perovskite solar cell",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.8889,
+          "post_t_raw_hits": 1,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "device modeling",
+          "task": "perovskite solar cell",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.8889,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Device modeling of high performance and eco-friendly $${\\text {FAMASnI}}_{3}$$ based perovskite solar cell",
+              "year": 2024,
+              "sim": 0.708
+            },
+            {
+              "title": "Device modeling and numerical analysis of lead-free MASnI3/Ca3AsI3 based perovskite solar cells with over 38% efficiency",
+              "year": 2025,
+              "sim": 0.703
+            }
+          ]
+        },
+        {
+          "method": "experiment and theory",
+          "task": "perovskite solar cell",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.8889,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Inverse design workflow discovers hole-transport materials tailored for perovskite solar cells",
+              "year": 2024,
+              "sim": 0.475
+            },
+            {
+              "title": "Efficient and stable perovskite solar cell through the interfacial engineering: Experiment and computational investigations",
+              "year": 2024,
+              "sim": 0.82
+            }
+          ]
+        }
+      ],
+      "random_baseline": [
+        {
+          "method": "gold-induced degradation",
+          "task": "stability evaluation",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "degradation factor analysis",
+          "task": "stability study",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 1,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "light-induced degradation study",
+          "task": "uv light stability",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        }
+      ]
+    },
+    {
+      "id": "eval-2",
+      "topic": "retrieval augmented generation attribution benchmarks",
+      "domain": "Computer Science & NLP",
+      "pre_t_papers": 25,
+      "extracted_pairs": 16,
+      "matrix_methods": 16,
+      "matrix_tasks": 16,
+      "predicted_precision_at_k": 0.0,
+      "random_precision_at_k": 0.0,
+      "predicted_gaps": [
+        {
+          "method": "codexglue benchmark",
+          "task": "emotion recognition",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9375,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "codexglue benchmark",
+          "task": "formal theorem proving",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9375,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "codexglue benchmark",
+          "task": "irrelevant context robustness",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9375,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        }
+      ],
+      "random_baseline": [
+        {
+          "method": "multi-task retrieval augmentation",
+          "task": "log anomaly detection",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9375,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "multi-task retrieval augmentation",
+          "task": "code understanding",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9375,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "fid-light",
+          "task": "open qa",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9375,
+          "post_t_raw_hits": 1,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        }
+      ]
+    },
+    {
+      "id": "eval-3",
+      "topic": "crispr cas9 off target cleavage detection",
+      "domain": "Biomedical & Genetics",
+      "pre_t_papers": 19,
+      "extracted_pairs": 18,
+      "matrix_methods": 15,
+      "matrix_tasks": 16,
+      "predicted_precision_at_k": 1.0,
+      "random_precision_at_k": 0.333,
+      "predicted_gaps": [
+        {
+          "method": "crispr-cas9",
+          "task": "off-target detection",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.7843,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Off-target detection of CRISPR-Cas9 nuclease in vitro with CROFT-Seq",
+              "year": 2026,
+              "sim": 0.736
+            },
+            {
+              "title": "Guarding the genome: strategies for off-target detection and minimization in CRISPR/Cas9 system",
+              "year": 2025,
+              "sim": 0.672
+            }
+          ]
+        },
+        {
+          "method": "crispr-cas9",
+          "task": "on/off-target cleavage",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.7843,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "PriMPT: Prior-Informed Multiscale Paired-Token Representation Learning for CRISPR/Cas9 Off-Target Cleavage Activity Prediction",
+              "year": 2026,
+              "sim": 0.549
+            },
+            {
+              "title": "Classifying CRISPR-Cas9 Off-Target Cleavage Sites from GUIDE-seq Data: A Class-Imbalanced Machine Learning Benchmark",
+              "year": 2026,
+              "sim": 0.595
+            }
+          ]
+        },
+        {
+          "method": "crispr-cas9 off-target prediction",
+          "task": "off-target detection",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.7843,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Improved CRISPR/Cas9 off-target prediction with DNABERT and epigenetic features",
+              "year": 2025,
+              "sim": 0.563
+            },
+            {
+              "title": "CRISPR-MFH: A Lightweight Hybrid Deep Learning Framework with Multi-Feature Encoding for Improved CRISPR-Cas9 Off-Target Prediction",
+              "year": 2025,
+              "sim": 0.626
+            }
+          ]
+        }
+      ],
+      "random_baseline": [
+        {
+          "method": "smrt-ot",
+          "task": "therapeutic application",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "review",
+          "task": "on/off-target cleavage",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.7843,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 7,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Analysis code and derived results: Cas9 concentration and high-fidelity variant effects on off-target cleavage commitment",
+              "year": 2026,
+              "sim": 0.629
+            },
+            {
+              "title": "Classifying CRISPR-Cas9 Off-Target Cleavage Sites from GUIDE-seq Data: A Class-Imbalanced Machine Learning Benchmark",
+              "year": 2026,
+              "sim": 0.598
+            }
+          ]
+        },
+        {
+          "method": "nickase assay",
+          "task": "therapeutic application",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 1,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        }
+      ]
+    },
+    {
+      "id": "eval-4",
+      "topic": "graph neural networks molecular property prediction",
+      "domain": "Graph Machine Learning & Chemistry",
+      "pre_t_papers": 21,
+      "extracted_pairs": 18,
+      "matrix_methods": 14,
+      "matrix_tasks": 4,
+      "predicted_precision_at_k": 0.667,
+      "random_precision_at_k": 0.667,
+      "predicted_gaps": [
+        {
+          "method": "graph neural network ensemble",
+          "task": "molecular property prediction",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.1667,
+          "post_t_raw_hits": 5,
+          "post_t_verified_hits": 4,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Advancements in Molecular Property Prediction: A Survey of Single and Multimodal Approaches",
+              "year": 2025,
+              "sim": 0.601
+            },
+            {
+              "title": "Uncertainty quantification for molecular property predictions with graph neural architecture search",
+              "year": 2024,
+              "sim": 0.767
+            }
+          ]
+        },
+        {
+          "method": "graph+sequence nn",
+          "task": "molecular property prediction",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.1667,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "hignn",
+          "task": "molecular property prediction",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.1667,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "MvMRL: a multi-view molecular representation learning method for molecular property prediction",
+              "year": 2024,
+              "sim": 0.584
+            },
+            {
+              "title": "A Graph-Based Deep Learning Framework for Molecular Property Prediction",
+              "year": 2026,
+              "sim": 0.826
+            }
+          ]
+        }
+      ],
+      "random_baseline": [
+        {
+          "method": "substructure masking",
+          "task": "drug discovery",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 7,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Recent advances in AI-based toxicity prediction for drug discovery",
+              "year": 2025,
+              "sim": 0.592
+            },
+            {
+              "title": "Nature meets machine: the AI renaissance in natural product drug discovery",
+              "year": 2026,
+              "sim": 0.503
+            }
+          ]
+        },
+        {
+          "method": "active semi-supervised gnn",
+          "task": "pcqm4m-lsc homo-lumo",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 0,
+          "post_t_verified_hits": 0,
+          "addressed_post_t": false,
+          "top_matches": []
+        },
+        {
+          "method": "xgraphboost",
+          "task": "drug discovery",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 7,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "A Survey of Graph Neural Networks for Drug Discovery: Recent Developments and Challenges",
+              "year": 2025,
+              "sim": 0.853
+            },
+            {
+              "title": "Advancements in Molecular Property Prediction: A Survey of Single and Multimodal Approaches",
+              "year": 2025,
+              "sim": 0.571
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eval-5",
+      "topic": "urban heat island remote sensing deep learning",
+      "domain": "Climate & Earth Observation",
+      "pre_t_papers": 23,
+      "extracted_pairs": 18,
+      "matrix_methods": 15,
+      "matrix_tasks": 17,
+      "predicted_precision_at_k": 1.0,
+      "random_precision_at_k": 1.0,
+      "predicted_gaps": [
+        {
+          "method": "deep learning",
+          "task": "urban heat island",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.6863,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 8,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "On the deep learning approach for improving the representation of urban climate: The Paris urban heat island and temperature extremes",
+              "year": 2024,
+              "sim": 0.708
+            },
+            {
+              "title": "Using Deep Learning to simulate the urban heat island over Paris",
+              "year": 2024,
+              "sim": 0.703
+            }
+          ]
+        },
+        {
+          "method": "remote sensing",
+          "task": "urban heat island",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.7843,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 7,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "MACHINE LEARNING AND REMOTE SENSING APPLICATIONS IN URBAN HEAT ISLAND RESEARCH: A BIBLIOMETRIC ANALYSIS",
+              "year": 2026,
+              "sim": 0.572
+            },
+            {
+              "title": "Recent advances on machine learning techniques for urban heat island applications: a review and new horizons",
+              "year": 2025,
+              "sim": 0.723
+            }
+          ]
+        }
+      ],
+      "random_baseline": [
+        {
+          "method": "literature review",
+          "task": "remote sensing",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.9444,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 3,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Precision agriculture for improving crop yield predictions: a literature review",
+              "year": 2025,
+              "sim": 0.554
+            },
+            {
+              "title": "Integrating remote sensing and machine learning for flood modelling: A systematic literature review",
+              "year": 2026,
+              "sim": 0.493
+            }
+          ]
+        },
+        {
+          "method": "deep learning",
+          "task": "urban green infrastructure",
+          "count_pre_t": 0,
+          "hypergeom_p": 0.8333,
+          "post_t_raw_hits": 8,
+          "post_t_verified_hits": 4,
+          "addressed_post_t": true,
+          "top_matches": [
+            {
+              "title": "Spatially explicit optimization of urban green infrastructure for multiple ecosystem services using deep learning surrogates",
+              "year": 2025,
+              "sim": 0.697
+            },
+            {
+              "title": "Mapping Green Roofs on Buildings Using Vegetation Indices and Deep Learning Techniques",
+              "year": 2025,
+              "sim": 0.59
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

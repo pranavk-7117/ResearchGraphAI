@@ -116,8 +116,10 @@ class LLMService:
 
         for attempt in range(retries + 1):
             raw_text = self.complete(current_prompt, system_prompt=instructions, context=context)
-            # Clean markdown formatting if present
+            # Clean markdown formatting and optional reasoning tags if present
             cleaned = raw_text.strip()
+            if "<think>" in cleaned and "</think>" in cleaned:
+                cleaned = re.sub(r"<think>.*?</think>", "", cleaned, flags=re.DOTALL).strip()
             if cleaned.startswith("```"):
                 lines = cleaned.splitlines()
                 if lines[0].startswith("```"):
@@ -125,6 +127,11 @@ class LLMService:
                 if lines and lines[-1].startswith("```"):
                     lines = lines[:-1]
                 cleaned = "\n".join(lines).strip()
+            if cleaned and not cleaned.startswith("{"):
+                start = cleaned.find("{")
+                end = cleaned.rfind("}")
+                if start != -1 and end > start:
+                    cleaned = cleaned[start : end + 1]
 
             try:
                 data = json.loads(cleaned)
@@ -172,7 +179,7 @@ class LLMService:
                     "model": model_name,
                     "messages": messages,
                     "temperature": 0.1,
-                    "max_tokens": 1500,
+                    "max_tokens": 4000,
                 }
                 try:
                     resp = client.post(

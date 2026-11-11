@@ -13,5 +13,15 @@
     "id": "eval-3",
     "topic": "crispr cas9 off target cleavage detection",
     "domain": "Biomedical & Genetics"
+  },
+  {
+    "id": "eval-4",
+    "topic": "graph neural networks molecular property prediction",
+    "domain": "Graph Machine Learning & Chemistry"
+  },
+  {
+    "id": "eval-5",
+    "topic": "urban heat island remote sensing deep learning",
+    "domain": "Climate & Earth Observation"
   }
 ]

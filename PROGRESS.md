@@ -24,7 +24,7 @@
 ### PHASE D — The differentiators
 - [x] **T11. Corpus completeness meter** (`completeness.py`, endpoint, migration, UI card)
 - [x] **T12. Auditable gap engine** (`gaps.py`, `gap_matrix.py`, migration, `GapsPage.tsx`)
-- [ ] **T12b. Temporal holdout validation** (`backend/scripts/gap_holdout.py`, `evaluation/`)
+- [x] **T12b. Temporal holdout validation** (`backend/scripts/gap_holdout.py`, `evaluation/`)
 - [ ] **T13. Evaluation harness** (`evaluation/evaluate_retrieval.py`, `evaluate_attribution.py`, `evaluate.py`, `docs/EVALUATION.md`)
 - [ ] **T14. Novelty assessment that is defensible** (`compare.py`)
 
@@ -113,3 +113,8 @@
 - **Changed**: Added Alembic migration `e5f607080905_t12_gap_matrix_cell.py` adding `matrix_cell` JSONB column on `research_gaps`; created `services/gap_matrix.py` with label normalization (`fuzz.ratio >= 92` plural/synonym merge), bipartite `Method x Task/Dataset` co-occurrence matrix with PMI + lower-tail `scipy.stats.hypergeom` p-values, and full-corpus `UnionFind` (`cosine >= 0.75`) signal clustering removing the prior `[:15]` cap. Updated `services/gaps.py` with single-source-of-truth `GAP_SCORE_FORMULA`, strict dropping of unverified quotes from persisted `supporting_evidence`/`counter_evidence`, and structured OpenAlex queries marking gaps with `> GAP_EXTERNAL_ADDRESSED_THRESHOLD` hits as `likely_addressed` with `0.65x` penalty. Exposed read-only `GET /projects/{id}/gap-matrix` and rendered an interactive matrix heatmap + status badges in `GapsPage.tsx`.
 - **Tests**: `python -m pytest tests/ -q`: 59 passed (synonym merging & hand-computed hypergeometric `10/56=0.1786` empty cell test, 20-signal UnionFind clustering without truncation, unverified quote drop & `likely_addressed` penalty check); `alembic upgrade/downgrade/upgrade` & `npm --prefix frontend run build` passed.
 - **Acceptance**: Empty matrix cell stats match exact hypergeometric CDF and unverified quotes are excluded/dropped. **PASS**.
+
+### T12b — Temporal holdout validation
+- **Changed**: Expanded `evaluation/topics.json` to 5 topics across distinct scientific domains; added `backend/scripts/gap_holdout.py` building pre-2023 (`T = 2023`) OpenAlex corpora, extracting `(method, task_or_dataset)` pairs cleanly (`max_tokens=4000` + reasoning tag stripping added to `services/llm.py`), computing T12 matrix void predictions, and checking post-2023 (`2024–2026`) OpenAlex + embedding similarity matches (`cosine >= 0.45`) against a random empty-cell baseline. Saved JSON & markdown reports in `evaluation/gap_holdout_results.json` and `evaluation/gap_holdout_summary.md`.
+- **Tests**: Executed `python scripts/gap_holdout.py --k 3 --limit 25`: Matrix Gap Precision@3 = **0.643** (9/14) vs Random Empty Cell Baseline = **0.357** (5/14), with explicit small-sample caveats documented.
+- **Acceptance**: 5-topic holdout table + caveats produced from real pre-T/post-T OpenAlex queries. **PASS**.
