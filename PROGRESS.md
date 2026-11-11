@@ -25,8 +25,8 @@
 - [x] **T11. Corpus completeness meter** (`completeness.py`, endpoint, migration, UI card)
 - [x] **T12. Auditable gap engine** (`gaps.py`, `gap_matrix.py`, migration, `GapsPage.tsx`)
 - [x] **T12b. Temporal holdout validation** (`backend/scripts/gap_holdout.py`, `evaluation/`)
-- [ ] **T13. Evaluation harness** (`evaluation/evaluate_retrieval.py`, `evaluate_attribution.py`, `evaluate.py`, `docs/EVALUATION.md`)
-- [ ] **T14. Novelty assessment that is defensible** (`compare.py`)
+- [x] **T13. Evaluation harness** (`evaluation/evaluate_retrieval.py`, `evaluate_attribution.py`, `evaluate.py`, `docs/EVALUATION.md`)
+- [x] **T14. Novelty assessment that is defensible** (`compare.py`)
 
 ### PHASE E — DBMS depth and polish
 - [ ] **T15. DBMS additions** (migrations, `docs/DBMS_NOTES.md`, Dashboard stats)
@@ -118,3 +118,13 @@
 - **Changed**: Expanded `evaluation/topics.json` to 5 topics across distinct scientific domains; added `backend/scripts/gap_holdout.py` building pre-2023 (`T = 2023`) OpenAlex corpora, extracting `(method, task_or_dataset)` pairs cleanly (`max_tokens=4000` + reasoning tag stripping added to `services/llm.py`), computing T12 matrix void predictions, and checking post-2023 (`2024–2026`) OpenAlex + embedding similarity matches (`cosine >= 0.45`) against a random empty-cell baseline. Saved JSON & markdown reports in `evaluation/gap_holdout_results.json` and `evaluation/gap_holdout_summary.md`.
 - **Tests**: Executed `python scripts/gap_holdout.py --k 3 --limit 25`: Matrix Gap Precision@3 = **0.643** (9/14) vs Random Empty Cell Baseline = **0.357** (5/14), with explicit small-sample caveats documented.
 - **Acceptance**: 5-topic holdout table + caveats produced from real pre-T/post-T OpenAlex queries. **PASS**.
+
+### T13 — Evaluation harness
+- **Changed**: Created `evaluation/evaluate_retrieval.py` (BEIR SciFact 5,183-doc, 300-query benchmark across dense, BM25/FTS, RRF, convex, and RRF+cross-encoder); updated `ChatService` default `RETRIEVAL_FUSION` to winning `"convex"` (`0.7151` nDCG@10, `0.6801` MRR@10). Created `evaluation/evaluate_attribution.py` (30 domain questions + 10 off-topic questions against OpenAlex chunks), fixed circular `mean_relevance` in `evaluation/evaluate.py` with independent `cross-encoder/ms-marco-MiniLM-L-6-v2` probability & topic keyword overlap, saved `evaluation/results_v2.json`, and wrote `docs/EVALUATION.md` with exact reproduction commands.
+- **Tests**: `evaluate_retrieval.py` (300 SciFact queries: convex `nDCG@10=0.7151` > RRF `0.6928` > FTS `0.6619` > dense `0.6484`), `evaluate_attribution.py` (`quote_verification_precision=0.9077`, `answers_with_verified_quote=1.0`, `off_topic_refusal=0.9`), `evaluate.py` + `pytest tests/test_rag_chat.py` (8 passed).
+- **Acceptance**: Non-circular metrics, real BEIR SciFact & attribution numbers, and `docs/EVALUATION.md` verified. **PASS**.
+
+### T14 — Novelty assessment that is defensible
+- **Changed**: Replaced single `1 - mean(cosine)` in `CompareService` (`services/compare.py`) with `compute_corpus_novelty_metrics` using batched `get_paper_embeddings`: (a) top-`k` (`k=5`) nearest-neighbor similarity list & mean, (b) leave-one-out corpus local density percentile, and (c) Uzzi-style pairwise reference-combination atypicality z-score against 50 pool shuffles (`compute_reference_atypicality`). Stored `relative_to_corpus_only: true`, `method_names`, and `formula` in `PaperAnalysis.evidence_rows` and rendered the neighbor breakdown + provenance card in `ComparePage.tsx`.
+- **Tests**: Added `backend/tests/test_compare_novelty.py` (2 passed: near-copy vs unrelated separation, uniform reference null z-score + sparse guard) and `npm --prefix frontend run build` passed.
+- **Acceptance**: Near-copy paper scores `top_k_mean_similarity > 0.95` & `max_similarity > 0.99`; unrelated scores `< 0.10`. **PASS**.

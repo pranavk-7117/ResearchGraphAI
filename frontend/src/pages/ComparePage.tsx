@@ -161,7 +161,7 @@ export function ComparePage({ project }: { project: Project | null }) {
             </div>
           </div>
 
-          {/* Semantic Distance Disclosure */}
+          {/* Semantic Distance & Multi-Metric Novelty Assessment (T14) */}
           {report.semantic_distance_label && (
             <div
               style={{
@@ -171,10 +171,37 @@ export function ComparePage({ project }: { project: Project | null }) {
                 borderRadius: 6,
                 fontSize: 12,
                 color: "#166534",
-                marginBottom: 20,
+                marginBottom: 16,
               }}
             >
-              <strong>Semantic Distance Provenance:</strong> {report.semantic_distance_label}
+              <strong>Relative Corpus Novelty Provenance:</strong> {report.semantic_distance_label}
+            </div>
+          )}
+
+          {selectedAnalysis.evidence_rows?.[0]?.top_k_neighbors && (
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, marginBottom: 20 }}>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12, marginBottom: 10 }}>
+                <span><strong>Top-{selectedAnalysis.evidence_rows[0].k} Mean Similarity:</strong> {selectedAnalysis.evidence_rows[0].top_k_mean_similarity}</span>
+                <span><strong>Max Similarity:</strong> {selectedAnalysis.evidence_rows[0].max_similarity}</span>
+                <span><strong>Local Density Percentile:</strong> {selectedAnalysis.evidence_rows[0].local_density_percentile}%</span>
+                <span>
+                  <strong>Reference Atypicality Z:</strong>{" "}
+                  {selectedAnalysis.evidence_rows[0].reference_atypicality?.available
+                    ? selectedAnalysis.evidence_rows[0].reference_atypicality.z_score
+                    : "N/A (sparse reference metadata)"}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: "#475569", marginBottom: 6 }}>
+                <strong>Nearest Neighbors in Corpus (Relative to Corpus Only):</strong>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {selectedAnalysis.evidence_rows[0].top_k_neighbors.map((nb: any) => (
+                  <div key={nb.paper_id} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, background: "white", padding: "4px 8px", borderRadius: 4, border: "1px solid #e2e8f0" }}>
+                    <span>{nb.title} ({nb.year ?? "n.d."})</span>
+                    <strong>sim={nb.similarity}</strong>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
