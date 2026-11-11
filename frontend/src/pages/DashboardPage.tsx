@@ -1,6 +1,6 @@
 import { BookOpen, FolderPlus, Layers, Plus, Trash2, ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, Project } from "../lib/api";
+import { api, Project, ProjectStats } from "../lib/api";
 
 export function DashboardPage({
   activeProject,
@@ -10,6 +10,7 @@ export function DashboardPage({
   onSelectProject: (p: Project) => void;
 }) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [activeStats, setActiveStats] = useState<ProjectStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [topicInput, setTopicInput] = useState("");
@@ -18,6 +19,14 @@ export function DashboardPage({
   useEffect(() => {
     loadProjects();
   }, []);
+
+  useEffect(() => {
+    if (!activeProject) {
+      setActiveStats(null);
+      return;
+    }
+    api.projects.stats(activeProject.id).then(setActiveStats).catch(() => setActiveStats(null));
+  }, [activeProject?.id]);
 
   async function loadProjects() {
     setLoading(true);
@@ -118,6 +127,36 @@ export function DashboardPage({
       {error && (
         <div style={{ marginBottom: 24, padding: 16, background: "#fee2e2", color: "#991b1b", borderRadius: 8 }}>
           <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {/* T15 Active Project DBMS Stats Card (backed by v_project_paper_stats & mv_field_growth) */}
+      {activeProject && activeStats && (
+        <div className="panel" style={{ padding: 18, marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <strong style={{ fontSize: 14, color: "#0f172a" }}>
+              Active Workspace Telemetry: {activeProject.topic}
+            </strong>
+            <span style={{ fontSize: 11, color: "#64748b" }}>Corpus v{activeStats.corpus_version}</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
+            <div style={{ background: "#f8fafc", padding: "8px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: 10, color: "#64748b" }}>Total Indexed</div>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>{activeStats.total_papers}</div>
+            </div>
+            <div style={{ background: "#f8fafc", padding: "8px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: 10, color: "#64748b" }}>Selected / Processed</div>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>{activeStats.selected_papers} / {activeStats.processed_papers}</div>
+            </div>
+            <div style={{ background: "#f8fafc", padding: "8px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: 10, color: "#64748b" }}>Avg Citations</div>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>{activeStats.avg_citation_count}</div>
+            </div>
+            <div style={{ background: "#f8fafc", padding: "8px 10px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: 10, color: "#64748b" }}>Year Span</div>
+              <div style={{ fontSize: 17, fontWeight: 700 }}>{activeStats.min_year && activeStats.max_year ? `${activeStats.min_year}–${activeStats.max_year}` : "—"}</div>
+            </div>
+          </div>
         </div>
       )}
 

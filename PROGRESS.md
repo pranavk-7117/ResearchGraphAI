@@ -29,7 +29,7 @@
 - [x] **T14. Novelty assessment that is defensible** (`compare.py`)
 
 ### PHASE E — DBMS depth and polish
-- [ ] **T15. DBMS additions** (migrations, `docs/DBMS_NOTES.md`, Dashboard stats)
+- [x] **T15. DBMS additions** (migrations, `docs/DBMS_NOTES.md`, Dashboard stats)
 - [ ] **T16. Final report and cleanup** (`README.md`, `docs/COURSE_MAPPING.md`, final evaluation summary)
 
 ---
@@ -128,3 +128,8 @@
 - **Changed**: Replaced single `1 - mean(cosine)` in `CompareService` (`services/compare.py`) with `compute_corpus_novelty_metrics` using batched `get_paper_embeddings`: (a) top-`k` (`k=5`) nearest-neighbor similarity list & mean, (b) leave-one-out corpus local density percentile, and (c) Uzzi-style pairwise reference-combination atypicality z-score against 50 pool shuffles (`compute_reference_atypicality`). Stored `relative_to_corpus_only: true`, `method_names`, and `formula` in `PaperAnalysis.evidence_rows` and rendered the neighbor breakdown + provenance card in `ComparePage.tsx`.
 - **Tests**: Added `backend/tests/test_compare_novelty.py` (2 passed: near-copy vs unrelated separation, uniform reference null z-score + sparse guard) and `npm --prefix frontend run build` passed.
 - **Acceptance**: Near-copy paper scores `top_k_mean_similarity > 0.95` & `max_similarity > 0.99`; unrelated scores `< 0.10`. **PASS**.
+
+### T15 — DBMS additions
+- **Changed**: Added reversible Alembic migration `f60708091006_t15_dbms_views_trigger.py` creating SQL View `v_project_paper_stats`, Materialized View `mv_field_growth` (`ix_mv_field_growth_proj_year`), and PL/pgSQL trigger `trg_project_papers_bump_corpus_version` (`fn_bump_project_corpus_version`) bumping `research_projects.corpus_version` on `project_papers` INSERT/DELETE. Added `services/dbms_queries.py` implementing single-query view listing in `GET /projects`, `GET /projects/{id}/stats`, `POST /projects/{id}/stats/refresh`, `GET /projects/{id}/ancestors` (`WITH RECURSIVE` CTE with array cycle guard), and `GET /projects/{id}/cluster-representatives` (`RANK() OVER (PARTITION BY cluster_id ...)`). Wired stats into `DashboardPage.tsx` and authored `docs/DBMS_NOTES.md` with ER diagram, FDs/JSONB rationale, 3 real `EXPLAIN (ANALYZE, BUFFERS)` query plans, `SKIP LOCKED` isolation analysis, CAP/BASE comparison, and Supabase RLS policies.
+- **Tests**: `python -m pytest tests/ -q`: 62 passed (`test_dbms_features.py` verified trigger INSERT/DELETE increments, `v_project_paper_stats`, `mv_field_growth`, `WITH RECURSIVE` matching `app.dsa.graph.bfs`, and `RANK() OVER`); `alembic upgrade/downgrade/upgrade` & `npm --prefix frontend run build` passed.
+- **Acceptance**: Real `EXPLAIN ANALYZE` plans captured (`13.719ms` FTS GIN, `50.060ms` HNSW, `1.681ms` recursive CTE) and live Postgres test passed. **PASS**.

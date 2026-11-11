@@ -29,6 +29,13 @@ from app.services.chat import ChatService
 from app.services.clustering import ClusteringService
 from app.services.compare import CompareService
 from app.services.completeness import CompletenessService
+from app.services.dbms_queries import (
+    get_citation_ancestors_recursive,
+    get_cluster_representatives_window,
+    get_project_stats_from_view,
+    list_user_project_stats,
+    refresh_field_growth_mv,
+)
 from app.services.discovery import DiscoveryService
 from app.services.embeddings import EmbeddingService
 from app.services.evolution import EvolutionService
@@ -83,7 +90,7 @@ def list_projects(
     user: AuthenticatedUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """List all research projects owned by the authenticated user."""
+    """List all research projects owned by the authenticated user using view `v_project_paper_stats`."""
     projects = (
         db.query(models.ResearchProject)
         .filter(models.ResearchProject.user_id == user.id)
@@ -91,27 +98,73 @@ def list_projects(
         .all()
     )
 
-    out = []
-    for p in projects:
-        count = (
-            db.query(models.ProjectPaper)
-            .filter(models.ProjectPaper.project_id == p.id)
-            .count()
+    stats_by_pid = list_user_project_stats(db, user.id) if projects else {}
+    return [
+        schemas.ProjectOut(
+            id=p.id,
+            user_id=p.user_id,
+            topic=p.topic,
+            status=p.status,
+            filters=p.filters or {},
+            corpus_version=p.corpus_version,
+            paper_count=stats_by_pid.get(p.id, {}).get("total_papers", 0),
+            created_at=p.created_at,
+            updated_at=p.updated_at,
         )
-        out.append(
-            schemas.ProjectOut(
-                id=p.id,
-                user_id=p.user_id,
-                topic=p.topic,
-                status=p.status,
-                filters=p.filters or {},
-                corpus_version=p.corpus_version,
-                paper_count=count,
-                created_at=p.created_at,
-                updated_at=p.updated_at,
-            )
-        )
-    return out
+        for p in projects
+    ]
+
+
+@router.get("/projects/{project_id}/stats")
+def get_project_stats(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Read-only project corpus stats backed by `v_project_paper_stats` and `mv_field_growth`."""
+    project = verify_project_ownership(project_id, user, db)
+    return get_project_stats_from_view(db, project.id)
+
+
+@router.post("/projects/{project_id}/stats/refresh")
+def refresh_project_stats(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Refresh materialized view `mv_field_growth` and return updated project stats."""
+    project = verify_project_ownership(project_id, user, db)
+    refresh_field_growth_mv(db)
+    return get_project_stats_from_view(db, project.id)
+
+
+@router.get("/projects/{project_id}/ancestors")
+def get_paper_ancestors(
+    project_id: int,
+    paper_id: int = Query(..., description="Target paper ID"),
+    max_depth: int = Query(6, ge=1, le=10),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Traverse citation ancestors using PostgreSQL `WITH RECURSIVE` CTE."""
+    project = verify_project_ownership(project_id, user, db)
+    ancestors = get_citation_ancestors_recursive(db, project.id, paper_id, max_depth=max_depth)
+    return {"project_id": project.id, "paper_id": paper_id, "ancestors": ancestors}
+
+
+@router.get("/projects/{project_id}/cluster-representatives")
+def get_cluster_representatives(
+    project_id: int,
+    top_n: int = Query(3, ge=1, le=10),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return top-N representative papers per cluster ranked via `RANK() OVER (PARTITION BY cluster_id ...)`."""
+    project = verify_project_ownership(project_id, user, db)
+    return {
+        "project_id": project.id,
+        "representatives": get_cluster_representatives_window(db, project.id, top_n=top_n),
+    }
 
 
 @router.get("/projects/{project_id}", response_model=schemas.ProjectOut)

@@ -360,6 +360,18 @@ export type CompletenessData = {
   disclaimer: string;
 };
 
+export type ProjectStats = {
+  project_id: number;
+  corpus_version: number;
+  total_papers: number;
+  selected_papers: number;
+  processed_papers: number;
+  avg_citation_count: number;
+  min_year: number | null;
+  max_year: number | null;
+  field_growth: Array<{ year: number; paper_count: number; total_citations: number }>;
+};
+
 export type PaperAnalysis = {
   id: number;
   paper_title: string;
@@ -437,6 +449,7 @@ export const api = {
         body: JSON.stringify({ topic, filters }),
       }),
     get: (id: number) => request<Project>(`/projects/${id}`),
+    stats: (id: number) => request<ProjectStats>(`/projects/${id}/stats`),
     delete: (id: number) =>
       request<void>(`/projects/${id}`, {
         method: "DELETE",
