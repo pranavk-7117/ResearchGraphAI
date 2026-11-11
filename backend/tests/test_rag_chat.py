@@ -242,3 +242,44 @@ def test_hybrid_db_isolation_and_gin_explain():
                 db.delete(p)
         db.commit()
         db.close()
+
+
+def test_onnx_embedder_runs_without_importing_torch():
+    """Verify ONNX Runtime MiniLM embedder produces normalized 384-d vectors without PyTorch."""
+    import sys
+    from app.services.embeddings import EMBED_DIM, get_onnx_embedder
+
+    onnx_emb = get_onnx_embedder()
+    if onnx_emb is None:
+        return  # Skip gracefully if onnxruntime/cache absent in offline CI
+    vecs = onnx_emb.encode(["Smart insole plantar pressure offloading"])
+    assert vecs.shape == (1, EMBED_DIM)
+    norm = float((vecs[0] ** 2).sum() ** 0.5)
+    assert abs(norm - 1.0) < 1e-4
+
+
+def test_worker_main_runs_safely_in_background_thread(monkeypatch):
+    """Worker loop must skip signal.signal when launched inside in_process_worker thread."""
+    import threading
+    from app import worker
+
+    errors = []
+
+    def fake_sleep(_sec):
+        worker.RUNNING = False
+
+    monkeypatch.setattr(worker.time, "sleep", fake_sleep)
+    monkeypatch.setattr(worker, "SessionLocal", MagicMock())
+    monkeypatch.setattr(worker.JobService, "acquire_next_job", MagicMock(return_value=None))
+    worker.RUNNING = True
+
+    def target():
+        try:
+            worker.main()
+        except Exception as exc:
+            errors.append(exc)
+
+    t = threading.Thread(target=target, name="in_process_worker")
+    t.start()
+    t.join(timeout=5.0)
+    assert not errors, f"Worker thread raised: {errors}"

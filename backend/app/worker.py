@@ -10,6 +10,7 @@ Usage:
 import os
 import signal
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -36,8 +37,9 @@ def handle_shutdown(signum, frame):
 
 def main():
     global RUNNING
-    signal.signal(signal.SIGINT, handle_shutdown)
-    signal.signal(signal.SIGTERM, handle_shutdown)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, handle_shutdown)
+        signal.signal(signal.SIGTERM, handle_shutdown)
 
     worker_id = f"worker-{os.getpid()}-{uuid.uuid4().hex[:6]}"
     print(f"[Worker] Started ResearchGraphAI background worker (ID: {worker_id}).")
