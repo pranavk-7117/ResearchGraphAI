@@ -30,7 +30,7 @@
 
 ### PHASE E — DBMS depth and polish
 - [x] **T15. DBMS additions** (migrations, `docs/DBMS_NOTES.md`, Dashboard stats)
-- [ ] **T16. Final report and cleanup** (`README.md`, `docs/COURSE_MAPPING.md`, final evaluation summary)
+- [x] **T16. Final report and cleanup** (`README.md`, `docs/COURSE_MAPPING.md`, final evaluation summary)
 
 ---
 
@@ -133,3 +133,8 @@
 - **Changed**: Added reversible Alembic migration `f60708091006_t15_dbms_views_trigger.py` creating SQL View `v_project_paper_stats`, Materialized View `mv_field_growth` (`ix_mv_field_growth_proj_year`), and PL/pgSQL trigger `trg_project_papers_bump_corpus_version` (`fn_bump_project_corpus_version`) bumping `research_projects.corpus_version` on `project_papers` INSERT/DELETE. Added `services/dbms_queries.py` implementing single-query view listing in `GET /projects`, `GET /projects/{id}/stats`, `POST /projects/{id}/stats/refresh`, `GET /projects/{id}/ancestors` (`WITH RECURSIVE` CTE with array cycle guard), and `GET /projects/{id}/cluster-representatives` (`RANK() OVER (PARTITION BY cluster_id ...)`). Wired stats into `DashboardPage.tsx` and authored `docs/DBMS_NOTES.md` with ER diagram, FDs/JSONB rationale, 3 real `EXPLAIN (ANALYZE, BUFFERS)` query plans, `SKIP LOCKED` isolation analysis, CAP/BASE comparison, and Supabase RLS policies.
 - **Tests**: `python -m pytest tests/ -q`: 62 passed (`test_dbms_features.py` verified trigger INSERT/DELETE increments, `v_project_paper_stats`, `mv_field_growth`, `WITH RECURSIVE` matching `app.dsa.graph.bfs`, and `RANK() OVER`); `alembic upgrade/downgrade/upgrade` & `npm --prefix frontend run build` passed.
 - **Acceptance**: Real `EXPLAIN ANALYZE` plans captured (`13.719ms` FTS GIN, `50.060ms` HNSW, `1.681ms` recursive CTE) and live Postgres test passed. **PASS**.
+
+### T16 — Final report and cleanup
+- **Changed**: Rewrote `README.md` to accurately reflect all implemented features, API endpoints, 3 core differentiators, honest limitations, 62 passing tests, and exact evaluation commands matching `docs/EVALUATION.md`. Created `docs/COURSE_MAPPING.md` mapping every DBMS, DS, and DM syllabus topic to exact source files, migrations, endpoints, and tests.
+- **Tests**: Final `python -m pytest tests/ -q`: **62 passed in 90.02s**; `npm --prefix frontend run build`: **passed** (`vite v6.4.3`, `dist/assets/index-BiQXkUQe.js`); `Select-String` verified zero `networkx`/`sklearn` imports in `backend/app/dsa/` and `backend/app/dm/`.
+- **Acceptance**: All checklist items `T0`–`T16` completed cleanly (`[x]`), test suite & production frontend build green, pushed to `origin main`. **PASS**.
