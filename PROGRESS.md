@@ -17,7 +17,7 @@
 - [x] **T7. DM-1: `backend/app/dm/` package & `docs/DM_PROOFS.md`**
 
 ### PHASE C — Graph and analytics improvements
-- [ ] **T8. Multi-layer graph** (`relations.py`, `routes.py`, `schemas.py`, `GraphPage.tsx`)
+- [x] **T8. Multi-layer graph** (`relations.py`, `routes.py`, `schemas.py`, `GraphPage.tsx`)
 - [ ] **T9. Better clustering** (`clustering.py`, UI display)
 - [ ] **T10. Evolution uses main-path analysis** (`evolution.py`, `EvolutionPage.tsx`)
 
@@ -88,3 +88,8 @@
 - **Changed**: Implemented `partial_order.py` (transitive reduction/Hasse diagram & closure), `path_counting.py` (Search Path Count DP over topo order), `main_path.py` (global & key-route main path with zero-edge guard), `inclusion_exclusion.py` (`union_size` + breakdown), `reading_path.py` (topological prerequisite ordering ranked by citation-DAG PageRank), and `docs/DM_PROOFS.md`. Exposed `GET /projects/{id}/hasse` and `GET /projects/{id}/reading-path`.
 - **Tests**: `python -m pytest tests/ -q`: 46 passed (hand-checked SPC/main-path DAG, 100 random DAG Hasse/closure checks vs NetworkX, inclusion-exclusion vs set union, reading path topological & PageRank cap checks).
 - **Acceptance**: Zero `networkx`/`sklearn` imports in `backend/app/dm/`; all 5 DM-1 tests + full suite green. **PASS**.
+
+### T8 — Multi-layer graph
+- **Changed**: Added bibliographic coupling layer (`RELATION_COUPLING`, Jaccard similarity over `paper_references`, no extra API calls) in `relations.py`; added `betweenness`, `k_core`, and `burt_constraint` on the combined undirected graph in `research_graph.py` (cached per `(project_id, corpus_version)`); exposed `layer` and `shared_references` on `GraphEdge` in `schemas.py` & `routes.py`. Updated `GraphPage.tsx` with layer toggles (citation + coupling default on, semantic off), edge weight slider, Time-Lane layout (`year x cluster`), 1-hop/2-hop ego-network focus, Trie autocomplete search, PageRank node sizing, bridge paper ring markers, DM-1 Reading Path panel, and "Why Connected?" inspector. Co-citation skipped because OpenAlex `cited_by` lists are not separately stored.
+- **Tests**: `python -m pytest tests/ -q`: 48 passed (hand-computed Jaccard coupling test `2/4=0.5`, structural metrics & API layer labels test); `npm --prefix frontend run build` passed.
+- **Acceptance**: `npm run build` passed; `/graph` returns `layer` names and exact Jaccard weights. **PASS**.

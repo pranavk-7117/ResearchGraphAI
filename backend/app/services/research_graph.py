@@ -7,6 +7,7 @@ Enforces strict separation of edge semantics:
 - Graph analytics are cached per (project_id, corpus_version) in graph_analytics_cache.
 """
 
+import math
 from typing import Any
 import networkx as nx
 from sqlalchemy.orm import Session
@@ -89,11 +90,16 @@ class NetworkXGraphService:
                 )
                 .first()
             )
-            if cached and cached.analytics:
-                # Normalize JSON string keys back to int node IDs
-                raw_pr = cached.analytics.get("pagerank", {})
+            if cached and cached.analytics and "betweenness" in cached.analytics:
                 cached_out = dict(cached.analytics)
-                cached_out["pagerank"] = {int(k): float(v) for k, v in raw_pr.items()}
+                for key in ("pagerank", "betweenness", "k_core", "burt_constraint"):
+                    raw_map = cached.analytics.get(key, {})
+                    if key == "k_core":
+                        cached_out[key] = {int(k): int(v) for k, v in raw_map.items()}
+                    else:
+                        cached_out[key] = {
+                            int(k): (None if v is None else float(v)) for k, v in raw_map.items()
+                        }
                 return cached_out
 
         if len(G.nodes) == 0:
@@ -101,6 +107,9 @@ class NetworkXGraphService:
                 "total_nodes": 0,
                 "total_edges": 0,
                 "pagerank": {},
+                "betweenness": {},
+                "k_core": {},
+                "burt_constraint": {},
                 "connected_components": [],
                 "density": 0.0,
             }
@@ -112,6 +121,43 @@ class NetworkXGraphService:
         except Exception:
             pagerank = {int(n): round(1.0 / len(G.nodes), 6) for n in G.nodes}
 
+        # Combined undirected graph for betweenness, k-core, and Burt's constraint
+        U = nx.Graph()
+        U.add_nodes_from(G.nodes(data=True))
+        for u, v, data in G.edges(data=True):
+            if u == v:
+                continue
+            w = max(0.01, float(data.get("weight", 1.0)))
+            dist = max(0.01, 1.0 - min(w, 0.99)) if data.get("relation_type") != RELATION_CITES else 0.1
+            if U.has_edge(u, v):
+                prev_w = U[u][v]["weight"]
+                prev_d = U[u][v]["distance"]
+                U[u][v]["weight"] = max(prev_w, w)
+                U[u][v]["distance"] = min(prev_d, dist)
+            else:
+                U.add_edge(u, v, weight=w, distance=dist)
+
+        try:
+            bet_raw = nx.betweenness_centrality(U, weight="distance", normalized=True)
+            betweenness = {int(k): round(float(v), 6) for k, v in bet_raw.items()}
+        except Exception:
+            betweenness = {int(n): 0.0 for n in U.nodes}
+
+        try:
+            core_raw = nx.core_number(U)
+            k_core = {int(k): int(v) for k, v in core_raw.items()}
+        except Exception:
+            k_core = {int(n): 0 for n in U.nodes}
+
+        try:
+            const_raw = nx.constraint(U, weight="weight")
+            burt_constraint: dict[int, float | None] = {
+                int(k): (None if (v is None or math.isnan(float(v))) else round(float(v), 4))
+                for k, v in const_raw.items()
+            }
+        except Exception:
+            burt_constraint = {int(n): None for n in U.nodes}
+
         components = [
             list(comp)
             for comp in nx.weakly_connected_components(G)
@@ -122,6 +168,9 @@ class NetworkXGraphService:
             "total_edges": len(G.edges),
             "citation_edges": len(citation_dag.edges),
             "pagerank": pagerank,
+            "betweenness": betweenness,
+            "k_core": k_core,
+            "burt_constraint": burt_constraint,
             "connected_components": components,
             "density": round(float(nx.density(G)), 4),
         }
@@ -138,6 +187,9 @@ class NetworkXGraphService:
                 )
                 serializable = dict(analytics)
                 serializable["pagerank"] = {str(k): v for k, v in pagerank.items()}
+                serializable["betweenness"] = {str(k): v for k, v in betweenness.items()}
+                serializable["k_core"] = {str(k): v for k, v in k_core.items()}
+                serializable["burt_constraint"] = {str(k): v for k, v in burt_constraint.items()}
                 if existing:
                     existing.analytics = serializable
                 else:

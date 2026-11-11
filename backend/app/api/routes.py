@@ -24,6 +24,7 @@ from app.dm.partial_order import transitive_closure, transitive_reduction
 from app.dm.reading_path import compute_reading_path
 from app.dsa.graph import Graph as DSAGraph, has_cycle
 from app.dsa.trie import Trie
+from app.services.constants import RELATION_COUPLING, layer_for_relation
 from app.services.chat import ChatService
 from app.services.clustering import ClusteringService
 from app.services.compare import CompareService
@@ -364,6 +365,9 @@ def get_project_graph(
         G, db=db, project_id=project.id, corpus_version=project.corpus_version
     )
     pagerank_map = graph_analytics.get("pagerank", {})
+    betweenness_map = graph_analytics.get("betweenness", {})
+    k_core_map = graph_analytics.get("k_core", {})
+    burt_map = graph_analytics.get("burt_constraint", {})
 
     nodes = []
     for pp, paper in project_papers:
@@ -382,6 +386,9 @@ def get_project_graph(
                 doi=paper.doi,
                 url=paper.original_url or (f"https://doi.org/{paper.doi}" if paper.doi else None),
                 pagerank=float(pagerank_map.get(paper.id, 0.0)),
+                betweenness=float(betweenness_map.get(paper.id, 0.0)),
+                k_core=int(k_core_map.get(paper.id, 0)),
+                burt_constraint=burt_map.get(paper.id),
             )
         )
 
@@ -391,17 +398,43 @@ def get_project_graph(
         .all()
     )
 
+    # Preload shared reference labels for coupling edges if any coupling edge exists
+    coupling_refs_by_pid: dict[int, dict[str, str]] = {}
+    if any(r.relation_type == RELATION_COUPLING for r in relations):
+        from app.services.relations import canonical_reference_key
+        pids = [paper.id for _pp, paper in project_papers]
+        if pids:
+            ref_rows = (
+                db.query(models.PaperReference)
+                .filter(models.PaperReference.citing_paper_id.in_(pids))
+                .all()
+            )
+            for rr in ref_rows:
+                ck = canonical_reference_key(rr)
+                if ck:
+                    label = rr.doi or (rr.raw_reference[:90] if rr.raw_reference else ck)
+                    coupling_refs_by_pid.setdefault(rr.citing_paper_id, {})[ck] = label
+
     edges = []
     for rel in relations:
+        shared_refs: list[str] = []
+        if rel.relation_type == RELATION_COUPLING:
+            r_src = coupling_refs_by_pid.get(rel.source_id, {})
+            r_tgt = coupling_refs_by_pid.get(rel.target_id, {})
+            common_keys = set(r_src.keys()) & set(r_tgt.keys())
+            shared_refs = [r_src[k] for k in sorted(common_keys)[:8]]
+
         edges.append(
             schemas.GraphEdge(
                 id=rel.id,
                 source=rel.source_id,
                 target=rel.target_id,
                 relation_type=rel.relation_type,
+                layer=layer_for_relation(rel.relation_type),
                 basis=rel.basis,
                 score=rel.score,
                 directed=bool(getattr(rel, "directed", rel.relation_type == "cites")),
+                shared_references=shared_refs,
             )
         )
 

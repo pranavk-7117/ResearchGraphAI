@@ -18,3 +18,12 @@ BASIS_LLM_INFERENCE = "llm_inference"
 KIND_CITATION = "citation"
 KIND_THEMATIC_LINEAGE = "thematic_lineage"
 KIND_METHOD_CHANGE = "method_change"
+
+
+def layer_for_relation(relation_type: str) -> str:
+    """Map PaperRelation.relation_type to multi-layer graph layer name."""
+    if relation_type == RELATION_CITES:
+        return "citation"
+    if relation_type == RELATION_COUPLING:
+        return "coupling"
+    return "semantic"

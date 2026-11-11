@@ -17,9 +17,11 @@ from sqlalchemy.orm import Session
 from app import models
 from app.dsa.heap import top_k
 from app.services.constants import (
+    BASIS_BIBLIOGRAPHIC_COUPLING,
     BASIS_CITATION_METADATA,
     BASIS_EMBEDDING_SIMILARITY,
     RELATION_CITES,
+    RELATION_COUPLING,
     RELATION_SIMILAR,
 )
 from app.services.embeddings import cosine_similarity, get_paper_embeddings
@@ -34,6 +36,55 @@ def _normalize_title_simple(title: str | None) -> str:
     if not title:
         return ""
     return " ".join(re.sub(r"[^\w\s]", " ", title).lower().split())
+
+
+def canonical_reference_key(ref: models.PaperReference) -> str | None:
+    """Canonical hashable identifier for a PaperReference row used in bibliographic coupling."""
+    if ref.cited_paper_id is not None:
+        return f"pid:{ref.cited_paper_id}"
+    if ref.doi and ref.doi.strip():
+        return f"doi:{ref.doi.strip().lower()}"
+    if ref.raw_reference and ref.raw_reference.strip():
+        clean = " ".join(ref.raw_reference.strip().lower().split())
+        return f"raw:{clean[:180]}"
+    return None
+
+
+def compute_bibliographic_coupling_pairs(
+    refs_by_paper: dict[int, set[str]],
+) -> list[tuple[int, int, float, int]]:
+    """
+    Compute undirected bibliographic coupling edges (u < v) with Jaccard similarity
+    over reference sets: |R_u & R_v| / |R_u | R_v|.
+    Returns list of (u, v, jaccard_score, shared_count).
+    """
+    pids = sorted(pid for pid, rset in refs_by_paper.items() if rset)
+    # Inverted index from ref_key -> list of citing paper_ids to skip zero-overlap pairs
+    inv: dict[str, list[int]] = {}
+    for pid in pids:
+        for rkey in refs_by_paper[pid]:
+            inv.setdefault(rkey, []).append(pid)
+
+    candidate_pairs: set[tuple[int, int]] = set()
+    for plist in inv.values():
+        if len(plist) < 2:
+            continue
+        for i in range(len(plist)):
+            for j in range(i + 1, len(plist)):
+                u, v = plist[i], plist[j]
+                candidate_pairs.add((u, v) if u < v else (v, u))
+
+    edges: list[tuple[int, int, float, int]] = []
+    for u, v in sorted(candidate_pairs):
+        ru = refs_by_paper[u]
+        rv = refs_by_paper[v]
+        shared = len(ru & rv)
+        if shared == 0:
+            continue
+        union_len = len(ru | rv)
+        jaccard = shared / union_len if union_len > 0 else 0.0
+        edges.append((u, v, round(float(jaccard), 4), shared))
+    return edges
 
 
 class RelationsService:
@@ -273,6 +324,30 @@ class RelationsService:
                 relation_type=RELATION_SIMILAR,
                 basis=BASIS_EMBEDDING_SIMILARITY,
                 score=round(float(sim_val), 4),
+                directed=False,
+            )
+            db.add(rel)
+            created_relations.append(rel)
+
+        # 4. Bibliographic Coupling Layer (Jaccard similarity over paper_references, no extra API calls)
+        refs_by_paper: dict[int, set[str]] = {}
+        for ref in refs:
+            rkey = canonical_reference_key(ref)
+            if rkey:
+                refs_by_paper.setdefault(ref.citing_paper_id, set()).add(rkey)
+
+        for id_a, id_b, jaccard, _shared in compute_bibliographic_coupling_pairs(refs_by_paper):
+            key = (id_a, id_b, RELATION_COUPLING)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            rel = models.PaperRelation(
+                project_id=project_id,
+                source_id=id_a,
+                target_id=id_b,
+                relation_type=RELATION_COUPLING,
+                basis=BASIS_BIBLIOGRAPHIC_COUPLING,
+                score=jaccard,
                 directed=False,
             )
             db.add(rel)

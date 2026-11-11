@@ -118,6 +118,9 @@ class GraphNode(BaseModel):
     doi: str | None = None
     url: str | None = None
     pagerank: float = 0.0
+    betweenness: float = 0.0
+    k_core: int = 0
+    burt_constraint: float | None = None
 
 
 class GraphEdge(BaseModel):
@@ -125,9 +128,11 @@ class GraphEdge(BaseModel):
     source: int
     target: int
     relation_type: str  # cites | similar | coupling
+    layer: str = "semantic"  # citation | coupling | semantic
     basis: str  # citation_metadata | embedding_similarity | bibliographic_coupling
     score: float
     directed: bool = True
+    shared_references: list[str] = []
 
 
 class GraphOut(BaseModel):

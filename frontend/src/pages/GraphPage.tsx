@@ -163,11 +163,55 @@ export function GraphPage({ project }: { project: Project | null }) {
   const [error, setError] = useState<string | null>(null);
 
   // Toolbar state
-  const [layoutMode, setLayoutMode] = useState<"force" | "radial" | "concentric">("force");
+  const [layoutMode, setLayoutMode] = useState<"force" | "time-lane" | "radial" | "concentric">("force");
   const [colorMode, setColorMode] = useState<"cluster" | "citations" | "year">("cluster");
-  const [nodeSizeMode, setNodeSizeMode] = useState<"citations" | "pagerank" | "uniform">("citations");
+  const [nodeSizeMode, setNodeSizeMode] = useState<"pagerank" | "citations" | "uniform">("pagerank");
+  const [enabledLayers, setEnabledLayers] = useState<{ citation: boolean; coupling: boolean; semantic: boolean }>({
+    citation: true,
+    coupling: true,
+    semantic: false,
+  });
+  const [minEdgeWeight, setMinEdgeWeight] = useState<number>(0.0);
+  const [egoHops, setEgoHops] = useState<"all" | "1" | "2">("all");
+  const [autocompleteResults, setAutocompleteResults] = useState<Array<{ text: string; payload: { type: string; paper_id: number; title: string; year: number | null } }>>([]);
+  const [readingPathSteps, setReadingPathSteps] = useState<Array<{ paper_id: number; step: number; hop_distance: number; pagerank: number; title: string | null; year: number | null }>>([]);
+  const [loadingReadingPath, setLoadingReadingPath] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showAbstractFull, setShowAbstractFull] = useState(false);
+
+  // Prefix Trie autocomplete query
+  useEffect(() => {
+    if (!project || !searchQuery.trim()) {
+      setAutocompleteResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const res = await api.graph.autocomplete(project.id, searchQuery.trim(), 6);
+        setAutocompleteResults(res.results || []);
+      } catch {
+        setAutocompleteResults([]);
+      }
+    }, 150);
+    return () => clearTimeout(t);
+  }, [project?.id, searchQuery]);
+
+  async function loadReadingPathForSelected() {
+    if (!project || !selectedNode) return;
+    setLoadingReadingPath(true);
+    try {
+      const res = await api.graph.readingPath(project.id, selectedNode.id, 8, 3);
+      setReadingPathSteps(res.steps || []);
+    } catch {
+      setReadingPathSteps([]);
+    } finally {
+      setLoadingReadingPath(false);
+    }
+  }
+
+  useEffect(() => {
+    setReadingPathSteps([]);
+  }, [selectedNode?.id]);
 
   useEffect(() => {
     if (project) {
@@ -218,7 +262,7 @@ export function GraphPage({ project }: { project: Project | null }) {
     return () => clearTimeout(timer);
   }, [graphData.nodes.length]);
 
-  // Filtered nodes and edges
+  // Filtered nodes and edges with layer toggles, edge-weight threshold, and ego-network focus
   const filteredData = useMemo(() => {
     let nodes = graphData.nodes;
     if (selectedClusterId !== null) {
@@ -231,10 +275,43 @@ export function GraphPage({ project }: { project: Project | null }) {
       );
     }
 
-    const nodeIds = new Set(nodes.map((n) => n.id));
-    const edges = graphData.edges.filter((e) => {
-      const srcId = typeof e.source === "object" ? (e.source as any).id : e.source;
-      const tgtId = typeof e.target === "object" ? (e.target as any).id : e.target;
+    const activeEdges = graphData.edges.filter((e) => {
+      const layer = e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic");
+      if (layer === "citation" && !enabledLayers.citation) return false;
+      if (layer === "coupling" && !enabledLayers.coupling) return false;
+      if (layer === "semantic" && !enabledLayers.semantic) return false;
+      if ((e.score || 0) < minEdgeWeight && layer !== "citation") return false;
+      return true;
+    });
+
+    let nodeIds = new Set(nodes.map((n) => n.id));
+    if (egoHops !== "all" && selectedNode && nodeIds.has(selectedNode.id)) {
+      const maxHops = egoHops === "1" ? 1 : 2;
+      const egoIds = new Set<number>([selectedNode.id]);
+      let frontier = new Set<number>([selectedNode.id]);
+      for (let h = 0; h < maxHops; h++) {
+        const nextFrontier = new Set<number>();
+        for (const e of activeEdges) {
+          const srcId = Number(typeof e.source === "object" ? (e.source as any).id : e.source);
+          const tgtId = Number(typeof e.target === "object" ? (e.target as any).id : e.target);
+          if (frontier.has(srcId) && !egoIds.has(tgtId)) {
+            egoIds.add(tgtId);
+            nextFrontier.add(tgtId);
+          }
+          if (frontier.has(tgtId) && !egoIds.has(srcId)) {
+            egoIds.add(srcId);
+            nextFrontier.add(srcId);
+          }
+        }
+        frontier = nextFrontier;
+      }
+      nodes = nodes.filter((n) => egoIds.has(n.id));
+      nodeIds = egoIds;
+    }
+
+    const edges = activeEdges.filter((e) => {
+      const srcId = Number(typeof e.source === "object" ? (e.source as any).id : e.source);
+      const tgtId = Number(typeof e.target === "object" ? (e.target as any).id : e.target);
       return nodeIds.has(srcId) && nodeIds.has(tgtId);
     });
 
@@ -246,13 +323,40 @@ export function GraphPage({ project }: { project: Project | null }) {
         target: typeof e.target === "object" ? (e.target as any).id : e.target,
       })),
     };
-  }, [graphData, selectedClusterId, searchQuery]);
+  }, [graphData, selectedClusterId, searchQuery, enabledLayers, minEdgeWeight, egoHops, selectedNode]);
+
+  // Bridge paper threshold (top non-zero betweenness centrality nodes get a ring marker)
+  const bridgeThreshold = useMemo(() => {
+    const vals = graphData.nodes.map((n) => n.betweenness || 0).filter((v) => v > 0).sort((a, b) => b - a);
+    if (vals.length === 0) return Infinity;
+    return vals[Math.min(vals.length - 1, Math.max(0, Math.floor(vals.length * 0.25)))];
+  }, [graphData.nodes]);
 
   // Apply Layout Transformations
   useEffect(() => {
     if (!graphRef.current || filteredData.nodes.length === 0) return;
 
-    if (layoutMode === "radial") {
+    if (layoutMode === "time-lane") {
+      const years = filteredData.nodes.map((n: any) => n.year).filter((y: any) => typeof y === "number");
+      const minY = years.length ? Math.min(...years) : 2018;
+      const maxY = years.length ? Math.max(...years) : 2025;
+      const spanY = Math.max(1, maxY - minY);
+      const clusterIds = Array.from(new Set(filteredData.nodes.map((n: any) => n.cluster_id)));
+      const laneSpacing = Math.max(70, (size.height * 0.65) / Math.max(1, clusterIds.length));
+      const xSpan = Math.max(300, size.width * 0.72);
+      const seenLaneYear: Record<string, number> = {};
+
+      filteredData.nodes.forEach((node: any) => {
+        const yr = typeof node.year === "number" ? node.year : minY;
+        const laneIdx = clusterIds.indexOf(node.cluster_id);
+        const key = `${laneIdx}_${yr}`;
+        const offsetIdx = seenLaneYear[key] || 0;
+        seenLaneYear[key] = offsetIdx + 1;
+        node.fx = ((yr - minY) / spanY - 0.5) * xSpan;
+        node.fy = (laneIdx - (clusterIds.length - 1) / 2) * laneSpacing + (offsetIdx % 3 - 1) * 18;
+      });
+      graphRef.current.d3ReheatSimulation();
+    } else if (layoutMode === "radial") {
       const clusterMap = new Map<number | null, any[]>();
       filteredData.nodes.forEach((node: any) => {
         const cid = node.cluster_id;
@@ -339,14 +443,16 @@ export function GraphPage({ project }: { project: Project | null }) {
     return 9;
   };
 
-  // Connected papers to selected node
+  // Connected papers to selected node ("Why connected?" evidence from real edges)
   const connectedNeighbors = useMemo(() => {
     if (!selectedNode) return [];
     const neighbors: Array<{
       node: GraphNode;
       relationType: string;
+      layer: string;
       score: number;
       basis: string;
+      sharedReferences: string[];
     }> = [];
 
     const selectedId = Number(selectedNode.id);
@@ -357,30 +463,17 @@ export function GraphPage({ project }: { project: Project | null }) {
       if (src === selectedId || tgt === selectedId) {
         const otherId = src === selectedId ? tgt : src;
         const otherNode = graphData.nodes.find((n) => Number(n.id) === otherId);
-        if (otherNode && !neighbors.some((item) => Number(item.node.id) === otherId)) {
+        if (otherNode) {
           neighbors.push({
             node: otherNode,
             relationType: e.relation_type,
-            score: e.score || 0.85,
+            layer: e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic"),
+            score: e.score || 0.0,
             basis: e.basis,
+            sharedReferences: e.shared_references || [],
           });
         }
       }
-    }
-
-    // If no direct graph edges exist yet, find cluster or topic peers so the inspector is always informative
-    if (neighbors.length === 0 && selectedNode.cluster_id !== null) {
-      const clusterPeers = graphData.nodes.filter(
-        (n) => Number(n.id) !== selectedId && n.cluster_id === selectedNode.cluster_id
-      );
-      clusterPeers.slice(0, 4).forEach((peer, idx) => {
-        neighbors.push({
-          node: peer,
-          relationType: "similar",
-          score: Math.max(0.72, 0.94 - idx * 0.06),
-          basis: "cluster_co_occurrence",
-        });
-      });
     }
 
     return neighbors.sort((a, b) => b.score - a.score);
@@ -469,8 +562,52 @@ export function GraphPage({ project }: { project: Project | null }) {
               }}
             >
               <option value="force">Force-Directed</option>
+              <option value="time-lane">Time-Lane (Year x Cluster)</option>
               <option value="radial">Radial Clustered</option>
               <option value="concentric">Concentric Rings</option>
+            </select>
+          </div>
+
+          {/* Layer Toggles */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#334155", background: "#f8fafc", padding: "4px 8px", borderRadius: 6, border: "1px solid #cbd5e1" }}>
+            <span style={{ fontWeight: 600 }}>Layers:</span>
+            {(["citation", "coupling", "semantic"] as const).map((layerKey) => (
+              <label key={layerKey} style={{ display: "flex", alignItems: "center", gap: 3, cursor: "pointer", textTransform: "capitalize" }}>
+                <input
+                  type="checkbox"
+                  checked={enabledLayers[layerKey]}
+                  onChange={(e) => setEnabledLayers((prev) => ({ ...prev, [layerKey]: e.target.checked }))}
+                />
+                {layerKey}
+              </label>
+            ))}
+          </div>
+
+          {/* Edge Weight Threshold */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#475569" }}>
+            <span>Min Weight: {minEdgeWeight.toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={0.95}
+              step={0.05}
+              value={minEdgeWeight}
+              onChange={(e) => setMinEdgeWeight(Number(e.target.value))}
+              style={{ width: 70 }}
+            />
+          </div>
+
+          {/* Ego Focus Mode */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#475569" }}>
+            <span>Ego:</span>
+            <select
+              value={egoHops}
+              onChange={(e) => setEgoHops(e.target.value as any)}
+              style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 11, background: "#f8fafc" }}
+            >
+              <option value="all">Full Graph</option>
+              <option value="1">1-Hop Focus</option>
+              <option value="2">2-Hop Focus</option>
             </select>
           </div>
 
@@ -516,23 +653,54 @@ export function GraphPage({ project }: { project: Project | null }) {
             </select>
           </div>
 
-          {/* Search bar */}
+          {/* Trie Autocomplete Search bar */}
           <div style={{ position: "relative", marginLeft: 4 }}>
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search in graph..."
+              placeholder="Trie search title/author..."
               style={{
                 padding: "5px 10px 5px 28px",
                 borderRadius: 6,
                 border: "1px solid #cbd5e1",
                 fontSize: 12,
-                width: 180,
+                width: 195,
                 background: "#ffffff",
               }}
             />
             <Search size={14} color="#94a3b8" style={{ position: "absolute", left: 8, top: 8 }} />
+            {autocompleteResults.length > 0 && (
+              <div style={{
+                position: "absolute", top: 32, left: 0, width: 290, background: "white",
+                border: "1px solid #cbd5e1", borderRadius: 6, boxShadow: "0 6px 18px rgba(0,0,0,0.12)",
+                zIndex: 50, maxHeight: 220, overflowY: "auto",
+              }}>
+                {autocompleteResults.map((item, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      const target = graphData.nodes.find((n) => n.id === item.payload.paper_id);
+                      if (target) {
+                        setSelectedNode(target);
+                        setSearchQuery(target.title);
+                      }
+                      setAutocompleteResults([]);
+                    }}
+                    style={{
+                      display: "block", width: "100%", textAlign: "left", padding: "6px 10px",
+                      border: "none", borderBottom: "1px solid #f1f5f9", background: "white",
+                      cursor: "pointer", fontSize: 11, color: "#0f172a",
+                    }}
+                  >
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "#2563eb", textTransform: "uppercase", marginRight: 6 }}>
+                      {item.payload.type}
+                    </span>
+                    {item.text.length > 52 ? `${item.text.slice(0, 50)}...` : item.text}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -649,9 +817,13 @@ export function GraphPage({ project }: { project: Project | null }) {
               nodeId="id"
               nodeVal={getNodeVal}
               nodeColor={getNodeColor}
-              linkColor={(link: any) => (link.relation_type === "cites" ? "#0f766e" : "#8b5cf6")}
-              linkWidth={(link: any) => (link.relation_type === "cites" ? 1.8 : 1.2)}
-              linkLineDash={(link: any) => (link.relation_type === "cites" ? undefined : [4, 4])}
+              linkColor={(link: any) =>
+                link.relation_type === "cites" ? "#0f766e" : link.relation_type === "coupling" ? "#d97706" : "#8b5cf6"
+              }
+              linkWidth={(link: any) => (link.relation_type === "cites" ? 1.8 : 1.3)}
+              linkLineDash={(link: any) =>
+                link.relation_type === "cites" ? undefined : link.relation_type === "coupling" ? [2, 2] : [4, 4]
+              }
               linkDirectionalArrowLength={(link: any) => (link.relation_type === "cites" ? 6 : 0)}
               linkDirectionalArrowRelPos={0.8}
               linkCurvature={0.08}
@@ -794,6 +966,16 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.arc(node.x, node.y, r + 3, 0, 2 * Math.PI);
                   ctx.strokeStyle = "#2563eb";
                   ctx.lineWidth = 2;
+                  ctx.stroke();
+                }
+
+                // Bridge paper ring marker (betweenness centrality)
+                const isBridge = (node.betweenness || 0) > 0 && (node.betweenness || 0) >= bridgeThreshold;
+                if (isBridge) {
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, r + 3.5, 0, 2 * Math.PI);
+                  ctx.strokeStyle = "#f59e0b";
+                  ctx.lineWidth = 2.2;
                   ctx.stroke();
                 }
 
@@ -1091,20 +1273,32 @@ export function GraphPage({ project }: { project: Project | null }) {
                   {selectedNode.venue ? ` · ${selectedNode.venue}` : ""}
                 </div>
 
-                {/* Metrics 3-Col Box */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 12 }}>
+                {/* Metrics Grid (PageRank, Betweenness, k-Core, Burt's Constraint) */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
                   <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
-                    <span style={{ fontSize: 10, color: "#64748b" }}>Citations</span>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>{selectedNode.citation_count}</div>
+                    <span style={{ fontSize: 10, color: "#64748b" }}>Citations · k-Core</span>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
+                      {selectedNode.citation_count} · k={selectedNode.k_core ?? 0}
+                    </div>
                   </div>
                   <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
-                    <span style={{ fontSize: 10, color: "#64748b" }}>Relations</span>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>{connectedNeighbors.length}</div>
-                  </div>
-                  <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
-                    <span style={{ fontSize: 10, color: "#64748b" }}>PageRank</span>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>
+                    <span style={{ fontSize: 10, color: "#64748b" }}>Citation PageRank</span>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
                       {((selectedNode.pagerank || 0) * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+                    <span style={{ fontSize: 10, color: "#64748b" }}>Betweenness (Bridge)</span>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#d97706" }}>
+                      {(selectedNode.betweenness || 0).toFixed(3)}
+                    </div>
+                  </div>
+                  <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
+                    <span style={{ fontSize: 10, color: "#64748b" }}>Burt&apos;s Constraint</span>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
+                      {selectedNode.burt_constraint !== null && selectedNode.burt_constraint !== undefined
+                        ? selectedNode.burt_constraint.toFixed(3)
+                        : "N/A"}
                     </div>
                   </div>
                 </div>
@@ -1200,6 +1394,26 @@ export function GraphPage({ project }: { project: Project | null }) {
                     </a>
                   )}
                   <button
+                    onClick={loadReadingPathForSelected}
+                    disabled={loadingReadingPath}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "6px 10px",
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      borderRadius: 6,
+                      fontSize: 11,
+                      cursor: "pointer",
+                      color: "#1d4ed8",
+                      fontWeight: 600,
+                    }}
+                    title="Compute topological prerequisite reading path (DM-1)"
+                  >
+                    <BookOpen size={12} /> {loadingReadingPath ? "..." : "Reading Path"}
+                  </button>
+                  <button
                     onClick={() => {
                       if (selectedNode && graphRef.current) {
                         const n: any = filteredData.nodes.find((item) => item.id === selectedNode.id);
@@ -1252,18 +1466,32 @@ export function GraphPage({ project }: { project: Project | null }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <BarChart3 size={15} color="#8b5cf6" />
-                <h3 style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", margin: 0 }}>Connected Papers</h3>
+                <h3 style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", margin: 0 }}>Why Connected?</h3>
               </div>
-              <span style={{ fontSize: 11, color: "#64748b" }}>{connectedNeighbors.length} relations</span>
+              <span style={{ fontSize: 11, color: "#64748b" }}>{connectedNeighbors.length} edges</span>
             </div>
 
+            {readingPathSteps.length > 0 && (
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#1e40af", marginBottom: 4 }}>
+                  Prerequisite Reading Path ({readingPathSteps.length} steps):
+                </div>
+                {readingPathSteps.map((st) => (
+                  <div key={st.paper_id} style={{ fontSize: 10, color: "#1e293b", marginBottom: 2 }}>
+                    <strong>{st.step}.</strong> {st.title || `Paper ${st.paper_id}`} ({st.year || "n.d."} · hop {st.hop_distance})
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={{ display: "flex", flexDirection: "column", gap: 8, overflowY: "auto", flex: 1 }}>
-              {connectedNeighbors.map(({ node, relationType, score }) => {
-                const pct = Math.round(Math.min(100, Math.max(10, score * 100)));
-                const isCitation = relationType === "cites";
+              {connectedNeighbors.map(({ node, layer, basis, score, sharedReferences }, idx) => {
+                const pct = Math.round(Math.min(100, Math.max(8, score * 100)));
+                const isCitation = layer === "citation";
+                const isCoupling = layer === "coupling";
                 return (
                   <button
-                    key={node.id}
+                    key={`${node.id}_${layer}_${idx}`}
                     onClick={() => {
                       setSelectedNode(node);
                       const targetNode: any = filteredData.nodes.find((item) => item.id === node.id);
@@ -1303,14 +1531,25 @@ export function GraphPage({ project }: { project: Project | null }) {
                           fontWeight: 600,
                           padding: "1px 5px",
                           borderRadius: 4,
-                          background: isCitation ? "#ccfbf1" : "#f3e8ff",
-                          color: isCitation ? "#0f766e" : "#7c3aed",
+                          background: isCitation ? "#ccfbf1" : isCoupling ? "#fef3c7" : "#f3e8ff",
+                          color: isCitation ? "#0f766e" : isCoupling ? "#b45309" : "#7c3aed",
                           flexShrink: 0,
+                          textTransform: "capitalize",
                         }}
                       >
-                        {isCitation ? "Citation" : "Similarity"}
+                        {layer}
                       </span>
                     </div>
+
+                    <div style={{ fontSize: 10, color: "#64748b" }}>
+                      Basis: {basis} · weight {score.toFixed(3)}
+                    </div>
+
+                    {sharedReferences && sharedReferences.length > 0 && (
+                      <div style={{ fontSize: 9.5, color: "#92400e", background: "#fffbeb", padding: "3px 6px", borderRadius: 4 }}>
+                        Shared refs ({sharedReferences.length}): {sharedReferences.slice(0, 2).join("; ")}
+                      </div>
+                    )}
 
                     {/* Score Bar */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2 }}>
@@ -1327,12 +1566,12 @@ export function GraphPage({ project }: { project: Project | null }) {
                           style={{
                             width: `${pct}%`,
                             height: "100%",
-                            background: isCitation ? "#0f766e" : "#8b5cf6",
+                            background: isCitation ? "#0f766e" : isCoupling ? "#d97706" : "#8b5cf6",
                             borderRadius: 2,
                           }}
                         />
                       </div>
-                      <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600, minWidth: 26, textAlign: "right" }}>
+                      <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600, minWidth: 32, textAlign: "right" }}>
                         {score.toFixed(2)}
                       </span>
                     </div>

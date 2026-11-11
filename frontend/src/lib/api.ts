@@ -71,15 +71,21 @@ export type GraphNode = {
   doi?: string | null;
   url?: string | null;
   pagerank?: number;
+  betweenness?: number;
+  k_core?: number;
+  burt_constraint?: number | null;
 };
 
 export type GraphEdge = {
   id: number;
   source: number;
   target: number;
-  relation_type: "cites" | "similar" | string;
-  basis: "citation_metadata" | "embedding_similarity" | string;
+  relation_type: "cites" | "similar" | "coupling" | string;
+  layer?: "citation" | "coupling" | "semantic" | string;
+  basis: "citation_metadata" | "embedding_similarity" | "bibliographic_coupling" | string;
   score: number;
+  directed?: boolean;
+  shared_references?: string[];
 };
 
 export type GraphData = {
@@ -376,6 +382,17 @@ export const api = {
   },
   graph: {
     get: (projectId: number) => request<GraphData>(`/projects/${projectId}/graph`),
+    autocomplete: (projectId: number, q: string, limit = 8) =>
+      request<{ query: string; results: Array<{ text: string; payload: { type: string; paper_id: number; title: string; year: number | null } }> }>(
+        `/projects/${projectId}/autocomplete?q=${encodeURIComponent(q)}&limit=${limit}`
+      ),
+    readingPath: (projectId: number, paperId: number, n = 10, maxHops = 3) =>
+      request<{
+        project_id: number;
+        target_paper_id: number;
+        target_title: string;
+        steps: Array<{ paper_id: number; step: number; hop_distance: number; pagerank: number; title: string | null; year: number | null; doi: string | null }>;
+      }>(`/projects/${projectId}/reading-path?paper_id=${paperId}&n=${n}&max_hops=${maxHops}`),
   },
 
   // Clusters, Evolution & Gaps
