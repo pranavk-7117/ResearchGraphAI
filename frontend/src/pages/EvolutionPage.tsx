@@ -327,6 +327,64 @@ export function EvolutionPage({ project }: { project: Project | null }) {
         <div style={{ display: "grid", gridTemplateColumns: selectedPhaseView === "Paper Lineage Stream" ? "1fr" : "1fr 340px", gap: 20, alignItems: "start" }}>
           {/* Main Timeline Column */}
           <div style={{ display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
+            {/* Citation Backbone (SPC Main-Path Analysis) */}
+            {data.citation_backbone && (
+              <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: 10, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,0.03)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 8, background: "#eff6ff", display: "flex", alignItems: "center", justifyContent: "center", color: "#2563eb" }}>
+                      <Network size={16} />
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", margin: 0 }}>
+                        Citation Backbone (Search Path Count Main-Path Analysis)
+                      </h3>
+                      <p style={{ fontSize: 11, color: "#64748b", margin: 0 }}>
+                        Chronological citation lineage scored by SPC ({data.citation_backbone.edge_count} citation edge(s), total source-to-sink paths: {data.citation_backbone.total_paths})
+                      </p>
+                    </div>
+                  </div>
+                  {data.citation_backbone.total_spc > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 600, background: "#eff6ff", color: "#1d4ed8", padding: "3px 9px", borderRadius: 12 }}>
+                      Total Path SPC: {data.citation_backbone.total_spc}
+                    </span>
+                  )}
+                </div>
+
+                {data.citation_backbone.is_sparse && (
+                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", borderRadius: 8, padding: "10px 12px", fontSize: 12, marginBottom: data.citation_backbone.global_path.length > 0 ? 12 : 0 }}>
+                    <strong>Sparse citation graph:</strong> {data.citation_backbone.message}
+                  </div>
+                )}
+
+                {data.citation_backbone.global_path.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
+                    {data.citation_backbone.global_path.map((node, idx) => {
+                      const nextEdge = data.citation_backbone?.global_edges[idx];
+                      return (
+                        <div key={node.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ background: "white", border: "1px solid #cbd5e1", borderRadius: 8, padding: "7px 10px", maxWidth: 210 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: "#2563eb" }}>{node.year ?? "n.d."}</div>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={node.title}>
+                              {node.title}
+                            </div>
+                          </div>
+                          {nextEdge && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "#64748b", fontSize: 10, fontWeight: 600 }}>
+                              <span style={{ background: "#e2e8f0", color: "#334155", padding: "2px 6px", borderRadius: 6 }}>
+                                SPC {nextEdge.spc}
+                              </span>
+                              <ArrowRight size={14} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Top Evolution Timeline Card */}
             <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: 10, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.03)" }}>
               {/* Header with Working View Dropdown */}

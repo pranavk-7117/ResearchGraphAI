@@ -193,6 +193,7 @@ class EvolutionOut(BaseModel):
     total_papers: int = 0
     paper_stream: list[dict[str, Any]] = []
     annual_milestones: list[dict[str, Any]] = []
+    citation_backbone: dict[str, Any] = {}
 
 
 # ==============================================================================

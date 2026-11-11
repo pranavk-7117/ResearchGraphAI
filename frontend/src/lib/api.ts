@@ -210,6 +210,28 @@ export type EvolutionData = {
   total_papers?: number;
   paper_stream?: StreamPaperItem[];
   annual_milestones?: AnnualMilestone[];
+  citation_backbone?: {
+    global_path: Array<{ id: number; title: string; year: number | null }>;
+    global_edges: Array<{
+      from_paper: { id: number; title: string; year: number | null };
+      to_paper: { id: number; title: string; year: number | null };
+      spc: number;
+    }>;
+    total_spc: number;
+    total_paths: number;
+    key_route_paths: Array<Array<{ id: number; title: string; year: number | null }>>;
+    key_route_edges: Array<{
+      from_paper: { id: number; title: string; year: number | null };
+      to_paper: { id: number; title: string; year: number | null };
+      spc: number;
+    }>;
+    edge_count: number;
+    min_citations: number;
+    is_sparse: boolean;
+    intent_pruning_status: string;
+    pruned_edges_count: number;
+    message: string;
+  };
 };
 
 export type Gap = {

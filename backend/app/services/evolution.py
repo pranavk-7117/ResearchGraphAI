@@ -11,11 +11,15 @@ Constructs 3 distinct evolutionary perspectives without fabricated filler:
 
 from collections import Counter
 from enum import Enum
+import os
+import re
 from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
+from app.dm.main_path import global_main_path, key_route_main_path
+from app.dsa.graph import Graph as DSAGraph, has_cycle
 from app.services.constants import (
     BASIS_CITATION_METADATA,
     BASIS_EMBEDDING_SIMILARITY,
@@ -70,6 +74,127 @@ class EvolutionService:
                 return res
         return {"verified": False, "chunk_id": None, "match_type": "none", "score": 0.0}
 
+    def _build_citation_backbone(
+        self,
+        paper_map: dict[int, models.Paper],
+        citation_edges: list[models.PaperRelation],
+        chunks_by_pid: dict[int, list[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """
+        Compute SPC-weighted global and key-route main paths on the citation DAG.
+        Never falls back silently to semantic similarity edges when citations are sparse.
+        """
+        min_citations = int(os.getenv("MIN_BACKBONE_CITATIONS", "3"))
+        intent_pruning = os.getenv("CITATION_INTENT_PRUNING", "false").lower() in ("1", "true", "yes")
+
+        def _has_fulltext(pid: int) -> bool:
+            paper = paper_map.get(pid)
+            units = chunks_by_pid.get(pid, [])
+            if not units:
+                return False
+            if len(units) > 1:
+                return True
+            abs_text = (paper.abstract or "").strip() if paper else ""
+            return bool(units[0]["text"].strip() and units[0]["text"].strip() != abs_text)
+
+        intent_pruning_status = "disabled"
+        pruned_count = 0
+        kept_edges = list(citation_edges)
+        if intent_pruning:
+            any_fulltext = any(_has_fulltext(e.source_id) for e in citation_edges if e.source_id in paper_map)
+            if not any_fulltext:
+                intent_pruning_status = "skipped_no_full_text_chunks"
+            else:
+                intent_pruning_status = "applied"
+                filtered = []
+                for e in citation_edges:
+                    citing = paper_map.get(e.source_id)
+                    cited = paper_map.get(e.target_id)
+                    if not citing or not cited:
+                        continue
+                    if not _has_fulltext(citing.id):
+                        filtered.append(e)
+                        continue
+                    joined = " ".join(u["text"].lower() for u in chunks_by_pid.get(citing.id, []))
+                    title_tokens = [w for w in re.findall(r"[a-z]{4,}", (cited.title or "").lower()) if w not in {"with", "from", "that", "this", "using", "study", "analysis"}]
+                    matched = any(tok in joined for tok in title_tokens[:5])
+                    if not matched and cited.authors:
+                        first_author = str(cited.authors[0].get("name", "")).lower().split()
+                        if first_author and first_author[-1] in joined:
+                            matched = True
+                    if matched:
+                        filtered.append(e)
+                    else:
+                        pruned_count += 1
+                kept_edges = filtered
+
+        dag = DSAGraph(directed=True)
+        for pid, paper in paper_map.items():
+            dag.add_node(pid, title=paper.title, year=paper.year)
+
+        for edge in kept_edges:
+            citing = paper_map.get(edge.source_id)
+            cited = paper_map.get(edge.target_id)
+            if not citing or not cited or citing.id == cited.id:
+                continue
+            # Chronological knowledge flow: foundational cited -> later citing
+            dag.add_edge(cited.id, citing.id, weight=edge.score)
+            if has_cycle(dag):
+                dag._adj[cited.id].pop(citing.id, None)
+
+        edge_count = len(dag.edges())
+        is_sparse = edge_count < min_citations
+        gmp = global_main_path(dag)
+        krmp = key_route_main_path(dag, top_k_edges=3)
+
+        def _node_ref(pid: int) -> dict[str, Any]:
+            p = paper_map.get(pid)
+            return {
+                "id": pid,
+                "title": p.title if p else f"Paper {pid}",
+                "year": p.year if p else None,
+            }
+
+        def _edge_ref(u: int, v: int, spc_val: int) -> dict[str, Any]:
+            return {
+                "from_paper": _node_ref(u),
+                "to_paper": _node_ref(v),
+                "spc": spc_val,
+            }
+
+        global_nodes = [_node_ref(pid) for pid in gmp.get("path", [])]
+        global_edges = [_edge_ref(e["from"], e["to"], e["spc"]) for e in gmp.get("edges", [])]
+        kr_paths = [[_node_ref(pid) for pid in path] for path in krmp.get("key_route_paths", [])]
+        kr_edges = [_edge_ref(e["from"], e["to"], e["spc"]) for e in krmp.get("key_route_edges", [])]
+
+        if edge_count == 0:
+            message = (
+                f"No verified citation edges available (minimum {min_citations} required for main-path backbone). "
+                "Semantic similarity is intentionally excluded from citation backbone analysis."
+            )
+        elif is_sparse:
+            message = (
+                f"Sparse citation graph ({edge_count} citation edge(s), below MIN_BACKBONE_CITATIONS={min_citations}). "
+                "Showing partial main path without substituting similarity edges."
+            )
+        else:
+            message = gmp.get("explanation", "Citation backbone computed via Search Path Count (SPC).")
+
+        return {
+            "global_path": global_nodes,
+            "global_edges": global_edges,
+            "total_spc": gmp.get("total_spc", 0),
+            "total_paths": gmp.get("total_paths", 0),
+            "key_route_paths": kr_paths,
+            "key_route_edges": kr_edges,
+            "edge_count": edge_count,
+            "min_citations": min_citations,
+            "is_sparse": is_sparse,
+            "intent_pruning_status": intent_pruning_status,
+            "pruned_edges_count": pruned_count,
+            "message": message,
+        }
+
     def generate_evolution(
         self,
         db: Session,
@@ -101,6 +226,20 @@ class EvolutionService:
                 "key_insights": [],
                 "time_range": {},
                 "total_papers": 0,
+                "citation_backbone": {
+                    "global_path": [],
+                    "global_edges": [],
+                    "total_spc": 0,
+                    "total_paths": 0,
+                    "key_route_paths": [],
+                    "key_route_edges": [],
+                    "edge_count": 0,
+                    "min_citations": int(os.getenv("MIN_BACKBONE_CITATIONS", "3")),
+                    "is_sparse": True,
+                    "intent_pruning_status": "disabled",
+                    "pruned_edges_count": 0,
+                    "message": "No papers in corpus.",
+                },
             }
 
         papers = (
@@ -139,8 +278,9 @@ class EvolutionService:
         method_progression: list[dict[str, Any]] = []
         finding_dynamics: list[dict[str, Any]] = []
 
-        # 1. Citation Timeline (verified citations, or similarity fallback)
+        # 1. Citation Timeline & SPC Citation Backbone (verified citations)
         citation_edges = [r for r in relations if r.relation_type == RELATION_CITES]
+        citation_backbone = self._build_citation_backbone(paper_map, citation_edges, chunks_by_pid)
         for edge in citation_edges:
             citing = paper_map.get(edge.source_id)
             cited = paper_map.get(edge.target_id)
@@ -528,4 +668,5 @@ class EvolutionService:
             "key_insights": key_insights,
             "time_range": {"min_year": min_year, "max_year": max_year} if min_year is not None else {},
             "total_papers": len(papers),
+            "citation_backbone": citation_backbone,
         }

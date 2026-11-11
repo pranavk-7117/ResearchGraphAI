@@ -661,6 +661,7 @@ def get_evolution(
         total_papers=res.get("total_papers", 0),
         paper_stream=res.get("paper_stream", []),
         annual_milestones=res.get("annual_milestones", []),
+        citation_backbone=res.get("citation_backbone", {}),
     )
 
 

@@ -19,7 +19,7 @@
 ### PHASE C — Graph and analytics improvements
 - [x] **T8. Multi-layer graph** (`relations.py`, `routes.py`, `schemas.py`, `GraphPage.tsx`)
 - [x] **T9. Better clustering** (`clustering.py`, UI display)
-- [ ] **T10. Evolution uses main-path analysis** (`evolution.py`, `EvolutionPage.tsx`)
+- [x] **T10. Evolution uses main-path analysis** (`evolution.py`, `EvolutionPage.tsx`)
 
 ### PHASE D — The differentiators
 - [ ] **T11. Corpus completeness meter** (`completeness.py`, endpoint, migration, UI card)
@@ -98,3 +98,8 @@
 - **Changed**: Rewrote `clustering.py` to support Leiden community detection on the weighted combined graph (with logged fallback to `greedy_modularity_communities` / `louvain_communities` when `igraph`/`leidenalg` aren't installed, plus connected-component enforcement) and cosine Agglomerative clustering with silhouette-selected `k` in `[2, min(8, n-1)]` and `O(1)` `pid_to_idx` lookup; computed & stored modularity, silhouette, and NMI partition agreement in `ResearchCluster.params`; exposed via `ClusterOut` and displayed in `GraphPage.tsx`.
 - **Tests**: `python -m pytest tests/ -q`: 50 passed (connected-subgraph guarantee, seed=42 determinism, silhouette optimal-k selection, and NMI verification); `npm --prefix frontend run build` passed.
 - **Acceptance**: Connected communities & deterministic partition verified. **PASS**.
+
+### T10 — Evolution uses main-path analysis
+- **Changed**: Built chronological citation DAG (`DSAGraph`) in `evolution.py` using `app.dm.main_path` (`global_main_path` and `key_route_main_path` with SPC weights), configurable `MIN_BACKBONE_CITATIONS` (default 3) sparsity guard with zero silent similarity fallback, and optional `CITATION_INTENT_PRUNING` flag that cleanly skips when no full-text chunks exist. Exposed `citation_backbone` via `EvolutionOut` (`schemas.py`, `routes.py`), `api.ts`, and rendered a Time-Lane Citation Backbone chain + sparsity warning banner in `EvolutionPage.tsx`.
+- **Tests**: `python -m pytest tests/ -q`: 52 passed (diamond DAG SPC main-path selection, similarity isolation, sparse citation warning, intent pruning skip); `npm --prefix frontend run build` passed.
+- **Acceptance**: Diamond DAG main path matches hand-calculated SPC; sparse graph emits warning without similarity fallback. **PASS**.
