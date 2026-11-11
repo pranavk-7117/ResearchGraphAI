@@ -1110,7 +1110,7 @@ export function GraphPage({ project }: { project: Project | null }) {
               boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <Sparkles size={15} color="#2563eb" />
                 <h3 style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", margin: 0 }}>Thematic Clusters</h3>
@@ -1128,6 +1128,21 @@ export function GraphPage({ project }: { project: Project | null }) {
                 {clusters.length}
               </span>
             </div>
+
+            {clusters.length > 0 && clusters[0].params && (
+              <div style={{ fontSize: 10, color: "#475569", background: "#f8fafc", padding: "5px 8px", borderRadius: 6, marginBottom: 8, border: "1px solid #e2e8f0" }}>
+                <strong>{clusters[0].algorithm || "Clustering"}</strong>
+                {clusters[0].params.modularity !== undefined && clusters[0].params.modularity !== null && (
+                  <span> · Mod: {Number(clusters[0].params.modularity).toFixed(3)}</span>
+                )}
+                {(clusters[0].params.silhouette !== undefined || clusters[0].params.silhouette_agglomerative !== undefined) && (
+                  <span> · Sil: {Number(clusters[0].params.silhouette ?? clusters[0].params.silhouette_agglomerative ?? 0).toFixed(3)}</span>
+                )}
+                {clusters[0].params.nmi !== undefined && clusters[0].params.nmi !== null && (
+                  <span> · NMI: {Number(clusters[0].params.nmi).toFixed(3)}</span>
+                )}
+              </div>
+            )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 180, overflowY: "auto" }}>
               {clusters.map((c, idx) => {

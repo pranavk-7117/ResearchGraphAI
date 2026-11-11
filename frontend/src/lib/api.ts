@@ -105,6 +105,16 @@ export type ClusterMember = {
 export type Cluster = {
   id: number;
   label: string;
+  algorithm?: string | null;
+  params?: {
+    modularity?: number | null;
+    silhouette?: number | null;
+    silhouette_agglomerative?: number | null;
+    nmi?: number | null;
+    resolution?: number;
+    seed?: number;
+    fallback?: string | null;
+  };
   representative_paper_ids: number[];
   year_distribution: Record<string, number>;
   member_count: number;

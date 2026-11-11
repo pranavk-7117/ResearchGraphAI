@@ -612,6 +612,8 @@ def get_clusters(
             schemas.ClusterOut(
                 id=c.id,
                 label=c.label,
+                algorithm=c.algorithm,
+                params=c.params or {},
                 representative_paper_ids=c.representative_paper_ids or [],
                 year_distribution=c.year_distribution or {},
                 member_count=len(member_outs),
@@ -619,6 +621,22 @@ def get_clusters(
             )
         )
     return out
+
+
+@router.post("/projects/{project_id}/clusters/recompute", response_model=list[schemas.ClusterOut])
+def recompute_clusters(
+    project_id: int,
+    algorithm: str = Query("leiden", pattern="^(leiden|agglomerative)$"),
+    resolution: float = Query(1.0, ge=0.2, le=3.0),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Recompute thematic clusters using Leiden community detection or cosine Agglomerative."""
+    project = verify_project_ownership(project_id, user, db)
+    ClusteringService().cluster_project(
+        db, project_id=project.id, algorithm=algorithm, resolution=resolution
+    )
+    return get_clusters(project_id=project.id, user=user, db=db)
 
 
 @router.get("/projects/{project_id}/evolution", response_model=schemas.EvolutionOut)

@@ -18,7 +18,7 @@
 
 ### PHASE C — Graph and analytics improvements
 - [x] **T8. Multi-layer graph** (`relations.py`, `routes.py`, `schemas.py`, `GraphPage.tsx`)
-- [ ] **T9. Better clustering** (`clustering.py`, UI display)
+- [x] **T9. Better clustering** (`clustering.py`, UI display)
 - [ ] **T10. Evolution uses main-path analysis** (`evolution.py`, `EvolutionPage.tsx`)
 
 ### PHASE D — The differentiators
@@ -93,3 +93,8 @@
 - **Changed**: Added bibliographic coupling layer (`RELATION_COUPLING`, Jaccard similarity over `paper_references`, no extra API calls) in `relations.py`; added `betweenness`, `k_core`, and `burt_constraint` on the combined undirected graph in `research_graph.py` (cached per `(project_id, corpus_version)`); exposed `layer` and `shared_references` on `GraphEdge` in `schemas.py` & `routes.py`. Updated `GraphPage.tsx` with layer toggles (citation + coupling default on, semantic off), edge weight slider, Time-Lane layout (`year x cluster`), 1-hop/2-hop ego-network focus, Trie autocomplete search, PageRank node sizing, bridge paper ring markers, DM-1 Reading Path panel, and "Why Connected?" inspector. Co-citation skipped because OpenAlex `cited_by` lists are not separately stored.
 - **Tests**: `python -m pytest tests/ -q`: 48 passed (hand-computed Jaccard coupling test `2/4=0.5`, structural metrics & API layer labels test); `npm --prefix frontend run build` passed.
 - **Acceptance**: `npm run build` passed; `/graph` returns `layer` names and exact Jaccard weights. **PASS**.
+
+### T9 — Better clustering
+- **Changed**: Rewrote `clustering.py` to support Leiden community detection on the weighted combined graph (with logged fallback to `greedy_modularity_communities` / `louvain_communities` when `igraph`/`leidenalg` aren't installed, plus connected-component enforcement) and cosine Agglomerative clustering with silhouette-selected `k` in `[2, min(8, n-1)]` and `O(1)` `pid_to_idx` lookup; computed & stored modularity, silhouette, and NMI partition agreement in `ResearchCluster.params`; exposed via `ClusterOut` and displayed in `GraphPage.tsx`.
+- **Tests**: `python -m pytest tests/ -q`: 50 passed (connected-subgraph guarantee, seed=42 determinism, silhouette optimal-k selection, and NMI verification); `npm --prefix frontend run build` passed.
+- **Acceptance**: Connected communities & deterministic partition verified. **PASS**.

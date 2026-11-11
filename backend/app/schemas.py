@@ -156,6 +156,8 @@ class ClusterMemberOut(BaseModel):
 class ClusterOut(BaseModel):
     id: int
     label: str
+    algorithm: str | None = None
+    params: dict[str, Any] = {}
     representative_paper_ids: list[int]
     year_distribution: dict[str, int]
     member_count: int
