@@ -361,6 +361,7 @@ class ResearchGap(Base):
     formula_version: Mapped[str] = mapped_column(String(50), default="1.0")
     evidence_strength: Mapped[float] = mapped_column(Float, default=0.0)
     external_verification: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    matrix_cell: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="candidate")
     user_feedback: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # relevant | not_relevant | already_addressed | needs_evidence | saved

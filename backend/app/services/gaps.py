@@ -15,25 +15,43 @@ Includes:
 
 import hashlib
 import math
+import os
 from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
 from app.clients import OpenAlexClient
+from app.services.embeddings import EmbeddingService
+from app.services.gap_matrix import build_method_task_matrix, cluster_limitation_signals
 from app.services.llm import LLMService, post_validate_citation
 
 
-def compute_gap_score(verified_supporting_count: int, verified_counter_count: int, evidence_qual: float) -> float:
-    """Deterministic gap score formula excluding unverified quotes."""
-    if verified_supporting_count <= 0:
+EXTERNAL_ADDRESSED_THRESHOLD = int(os.getenv("GAP_EXTERNAL_ADDRESSED_THRESHOLD", "5"))
+GAP_SCORE_FORMULA = (
+    "min(1.0, max(0.1, (min(verified_supporting_count, 5)*0.1 + evidence_quality*0.4 + 0.2 "
+    "+ matrix_void_bonus - verified_counter_count*0.1) * external_penalty)) "
+    "if (verified_supporting_count > 0 or matrix_void_bonus > 0) else 0.1"
+)
+
+
+def compute_gap_score(
+    verified_supporting_count: int,
+    verified_counter_count: int,
+    evidence_qual: float,
+    matrix_void_bonus: float = 0.0,
+    external_penalty: float = 1.0,
+) -> float:
+    """Single source-of-truth gap score formula excluding unverified quotes."""
+    if verified_supporting_count <= 0 and matrix_void_bonus <= 0.0:
         return 0.1
     raw_score = (
         (min(verified_supporting_count, 5) * 0.1)
         + (evidence_qual * 0.4)
         + 0.2
+        + matrix_void_bonus
         - (verified_counter_count * 0.1)
-    )
+    ) * external_penalty
     return round(max(0.1, min(1.0, raw_score)), 3)
 
 
@@ -93,6 +111,7 @@ class GapsService:
     def __init__(self):
         self.llm = LLMService()
         self.openalex = OpenAlexClient()
+        self.embeddings = EmbeddingService()
 
     def detect_gaps(
         self,
@@ -168,19 +187,46 @@ class GapsService:
                     "verified": bool(field_obj.get("verified", False)),
                 })
 
-        # If insufficient signals and no LLM, return empty without padding
-        if not evidence_signals or not self.llm.is_available():
+        # Step 1: Bipartite Method x Task/Dataset matrix voids
+        fact_rows = [
+            (f.paper_id, paper_map[f.paper_id].title if f.paper_id in paper_map else f"Paper {f.paper_id}", f)
+            for f in facts
+        ]
+        matrix_info = build_method_task_matrix(fact_rows, min_support=2)
+        matrix_candidates = matrix_info.get("candidates", [])
+
+        # Step 2: Cluster ALL limitation & future-work signals (no arbitrary [:15] cap)
+        if not evidence_signals and not matrix_candidates:
+            return []
+        if not self.llm.is_available():
             return []
 
-        # Prefer verified signals in prompt context
-        ordered_signals = sorted(evidence_signals, key=lambda s: (not s["verified"], s["paper_id"]))
-        context_items = []
-        for s in ordered_signals[:15]:
-            context_items.append(
-                f"- [paper_id={s['paper_id']}, chunk_id={s['chunk_id']}, {s['title']} ({s['year'] or 'n.d.'}) - Page {s['page']}]: "
-                f"{s['type'].upper()}: {s['text']} (Quote: \"{s['quote']}\")"
-            )
-        context_str = "\n".join(context_items)
+        signal_clusters = cluster_limitation_signals(
+            evidence_signals, self.embeddings.embed_batch, sim_threshold=0.75
+        ) if evidence_signals else []
+
+        context_lines: list[str] = []
+        if matrix_candidates:
+            context_lines.append("## Under-Explored Method x Task/Dataset Matrix Cells")
+            for cell in matrix_candidates[:5]:
+                context_lines.append(
+                    f"- [method='{cell['method']}', task='{cell['task']}', count={cell['count']}, "
+                    f"row_support={cell['row_support']}, col_support={cell['col_support']}, "
+                    f"expected={cell['expected']}, hypergeom_p={cell['hypergeom_p']}]"
+                )
+
+        if signal_clusters:
+            context_lines.append("\n## Clustered Limitation & Future-Work Signals")
+            for idx, cl in enumerate(signal_clusters[:5], start=1):
+                context_lines.append(
+                    f"Cluster {idx} ({cl['paper_count']} paper(s), {cl['verified_count']} verified quote(s)): {cl['representative']}"
+                )
+                for s in cl["signals"]:
+                    context_lines.append(
+                        f"  - [paper_id={s['paper_id']}, chunk_id={s['chunk_id']}, {s['title']} ({s['year'] or 'n.d.'}) - Page {s['page']}]: "
+                        f"{s['type'].upper()}: {s['text']} (Quote: \"{s['quote']}\")"
+                    )
+        context_str = "\n".join(context_lines)
 
         prompt = (
             f"Topic: {project.topic}\n\n"
@@ -229,31 +275,54 @@ class GapsService:
                 continue
             existing_hashes.add(stmt_hash)
 
-            # 1. Verify quotes strictly against stored chunks (keep unverified flagged, exclude from score)
+            # Step 3: Verify quotes strictly against stored chunks & DROP unverified quotes
             sup_ev = verify_evidence_list(g.supporting_evidence, chunks_by_paper_id, title_to_paper_id)
             cnt_ev = verify_evidence_list(g.counter_evidence, chunks_by_paper_id, title_to_paper_id)
 
             verified_sup = [e for e in sup_ev if e.get("verified") is True]
             verified_cnt = [e for e in cnt_ev if e.get("verified") is True]
 
+            # Match against matrix void cell if gap references method & task
+            matched_cell = None
+            stmt_lower = g.gap_statement.lower()
+            for cell in matrix_candidates:
+                if cell["method"] in stmt_lower and cell["task"] in stmt_lower:
+                    matched_cell = cell
+                    break
+
+            matrix_void_bonus = 0.0
+            if matched_cell is not None:
+                matrix_void_bonus = round(max(0.0, min(0.2, (1.0 - float(matched_cell.get("hypergeom_p", 1.0))) * 0.2)), 3)
+
+            # Step 4: Targeted structured external check in OpenAlex
+            external_info = self._external_openalex_check(g.gap_statement, matrix_cell=matched_cell)
+            is_likely_addressed = bool(external_info.get("likely_addressed", False))
+            external_penalty = 0.65 if is_likely_addressed else 1.0
+            gap_status = "likely_addressed" if is_likely_addressed else "candidate"
+
             num_evidence = len(verified_sup)
             num_counter = len(verified_cnt)
             evidence_qual = 0.85 if num_evidence > 0 else 0.0
-            final_score = compute_gap_score(num_evidence, num_counter, evidence_qual)
+            final_score = compute_gap_score(
+                num_evidence,
+                num_counter,
+                evidence_qual,
+                matrix_void_bonus=matrix_void_bonus,
+                external_penalty=external_penalty,
+            )
 
             score_components = {
-                "formula": "min(1.0, max(0.1, min(verified_supporting_count, 5)*0.1 + evidence_quality*0.4 + 0.2 - verified_counter_count*0.1)) if verified_supporting_count > 0 else 0.1",
-                "formula_version": "1.1",
+                "formula": GAP_SCORE_FORMULA,
+                "formula_version": "1.2",
                 "evidence_quality": evidence_qual,
                 "supporting_papers_count": num_evidence,
                 "total_supporting_quotes": len(sup_ev),
-                "unverified_quotes_excluded": len(sup_ev) - num_evidence,
+                "unverified_quotes_dropped": len(sup_ev) - num_evidence,
                 "counter_evidence_count": num_counter,
+                "matrix_void_bonus": matrix_void_bonus,
+                "external_penalty": external_penalty,
                 "calculated_strength": final_score,
             }
-
-            # 2. Targeted external check in OpenAlex for gap terms
-            external_info = self._external_openalex_check(g.gap_statement)
 
             gap_row = models.ResearchGap(
                 project_id=project_id,
@@ -262,16 +331,17 @@ class GapsService:
                 gap_statement=g.gap_statement,
                 why_it_matters=g.why_it_matters,
                 gap_type=g.gap_type,
-                supporting_evidence=sup_ev,
-                counter_evidence=cnt_ev,
+                supporting_evidence=verified_sup,
+                counter_evidence=verified_cnt,
                 corpus_cannot_establish=g.corpus_cannot_establish,
                 suggested_research_question=g.suggested_research_question,
                 suggested_validation=g.suggested_validation,
                 score_components=score_components,
-                formula_version="1.1",
+                formula_version="1.2",
                 evidence_strength=final_score,
                 external_verification=external_info,
-                status="candidate",
+                matrix_cell=matched_cell,
+                status=gap_status,
             )
             db.add(gap_row)
             created_gaps.append(gap_row)
@@ -279,27 +349,44 @@ class GapsService:
         db.commit()
         return created_gaps
 
-    def _external_openalex_check(self, gap_statement: str) -> dict[str, Any]:
-        """Perform a targeted external check in OpenAlex to see if related literature exists."""
-        # Extract 3-5 key terms from gap statement
-        words = [w for w in gap_statement.split() if len(w) > 4 and w.isalnum()]
-        search_terms = " ".join(words[:4])
+    def _external_openalex_check(
+        self,
+        gap_statement: str,
+        matrix_cell: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Perform a structured OpenAlex query to check whether the gap is already well-studied externally."""
+        if matrix_cell and matrix_cell.get("method") and matrix_cell.get("task"):
+            search_terms = f'"{matrix_cell["method"]}" AND "{matrix_cell["task"]}"'
+        else:
+            words = [w for w in gap_statement.split() if len(w) > 4 and w.isalnum()]
+            search_terms = " AND ".join(f'"{w}"' for w in words[:3]) if len(words) >= 2 else " ".join(words[:4])
+
         try:
-            results = self.openalex.search(search_terms, limit=5)
+            results = self.openalex.search(search_terms, limit=10)
             external_hits = [
                 {"title": r.title, "year": r.year, "doi": r.doi, "citation_count": r.citation_count}
-                for r in results[:3]
+                for r in results[:5]
             ]
+            total_found = len(results)
+            likely_addressed = total_found > EXTERNAL_ADDRESSED_THRESHOLD
             return {
                 "searched_terms": search_terms,
-                "external_papers_found": len(external_hits),
+                "external_papers_found": total_found,
+                "likely_addressed": likely_addressed,
+                "threshold": EXTERNAL_ADDRESSED_THRESHOLD,
                 "top_external_matches": external_hits,
-                "disclaimer": "Underrepresentation in this corpus is a candidate hypothesis. The external literature may contain related work as indicated above.",
+                "disclaimer": (
+                    f"Structured OpenAlex check found {total_found} hit(s); gap marked likely_addressed and score penalized."
+                    if likely_addressed
+                    else "Underrepresentation in this corpus is a candidate hypothesis. The external literature may contain related work as indicated above."
+                ),
             }
         except Exception:
             return {
                 "searched_terms": search_terms,
                 "external_papers_found": 0,
+                "likely_addressed": False,
+                "threshold": EXTERNAL_ADDRESSED_THRESHOLD,
                 "top_external_matches": [],
                 "disclaimer": "External lookup service was temporarily unreachable.",
             }

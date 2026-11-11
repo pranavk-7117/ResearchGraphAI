@@ -213,6 +213,8 @@ class GapOut(BaseModel):
     score_components: dict[str, Any]
     evidence_strength: float
     external_verification: dict[str, Any]
+    matrix_cell: dict[str, Any] | None = None
+    status: str = "candidate"
     user_feedback: str | None = None
     created_at: datetime
 

@@ -32,6 +32,7 @@ from app.services.completeness import CompletenessService
 from app.services.discovery import DiscoveryService
 from app.services.embeddings import EmbeddingService
 from app.services.evolution import EvolutionService
+from app.services.gap_matrix import build_method_task_matrix
 from app.services.gaps import GapsService
 from app.services.jobs import JobService
 from app.services.literature_review import LiteratureReviewService
@@ -732,11 +733,32 @@ def get_gaps(
             score_components=g.score_components or {},
             evidence_strength=g.evidence_strength,
             external_verification=g.external_verification or {},
+            matrix_cell=getattr(g, "matrix_cell", None),
+            status=getattr(g, "status", "candidate"),
             user_feedback=g.user_feedback,
             created_at=g.created_at,
         )
         for g in gaps
     ]
+
+
+@router.get("/projects/{project_id}/gap-matrix")
+def get_gap_matrix(
+    project_id: int,
+    min_support: int = Query(2, ge=1, le=10),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Read-only normalized Method x Task/Dataset bipartite matrix with PMI and hypergeometric p-values."""
+    project = verify_project_ownership(project_id, user, db)
+    rows = (
+        db.query(models.PaperFact, models.Paper.title)
+        .join(models.ProjectPaper, models.ProjectPaper.paper_id == models.PaperFact.paper_id)
+        .join(models.Paper, models.Paper.id == models.PaperFact.paper_id)
+        .filter(models.ProjectPaper.project_id == project.id)
+        .all()
+    )
+    return build_method_task_matrix([(f.paper_id, title, f) for f, title in rows], min_support=min_support)
 
 
 @router.post("/gaps/{gap_id}/feedback")

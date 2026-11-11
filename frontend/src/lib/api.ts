@@ -264,11 +264,45 @@ export type Gap = {
   external_verification: {
     searched_terms?: string;
     external_papers_found?: number;
+    likely_addressed?: boolean;
     top_external_matches?: Array<{ title: string; year: number | null; doi?: string }>;
     disclaimer?: string;
   };
+  matrix_cell?: {
+    method: string;
+    task: string;
+    count: number;
+    row_support: number;
+    col_support: number;
+    expected: number;
+    pmi: number;
+    hypergeom_p: number;
+  } | null;
+  status?: string;
   user_feedback: string | null;
   created_at: string;
+};
+
+export type GapMatrixCell = {
+  method: string;
+  task: string;
+  count: number;
+  row_support: number;
+  col_support: number;
+  expected: number;
+  pmi: number;
+  hypergeom_p: number;
+  is_candidate_void: boolean;
+  papers: Array<{ paper_id: number; title: string }>;
+};
+
+export type GapMatrixData = {
+  methods: string[];
+  tasks: string[];
+  cells: GapMatrixCell[];
+  candidates: GapMatrixCell[];
+  total_papers: number;
+  min_support: number;
 };
 
 export type LiteratureReview = {
@@ -462,6 +496,7 @@ export const api = {
   },
   gaps: {
     get: (projectId: number) => request<Gap[]>(`/projects/${projectId}/gaps`),
+    matrix: (projectId: number) => request<GapMatrixData>(`/projects/${projectId}/gap-matrix`),
     detect: (projectId: number) =>
       request<Job>(`/projects/${projectId}/gaps/detect`, { method: "POST" }),
     feedback: (gapId: number, feedback: string) =>

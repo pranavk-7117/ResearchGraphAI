@@ -12,10 +12,12 @@ import {
   ThumbsUp,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, Gap, Job, Project } from "../lib/api";
+import { api, Gap, GapMatrixCell, GapMatrixData, Job, Project } from "../lib/api";
 
 export function GapsPage({ project }: { project: Project | null }) {
   const [gaps, setGaps] = useState<Gap[]>([]);
+  const [matrix, setMatrix] = useState<GapMatrixData | null>(null);
+  const [selectedCell, setSelectedCell] = useState<GapMatrixCell | null>(null);
   const [loading, setLoading] = useState(false);
   const [detectJob, setDetectJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,8 +33,13 @@ export function GapsPage({ project }: { project: Project | null }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.gaps.get(project.id);
+      const [data, mat] = await Promise.all([
+        api.gaps.get(project.id),
+        api.gaps.matrix(project.id).catch(() => null),
+      ]);
       setGaps(data);
+      setMatrix(mat);
+      setSelectedCell(null);
     } catch (err: any) {
       setError(err?.message || "Failed to load candidate research gaps.");
     } finally {
@@ -159,6 +166,74 @@ export function GapsPage({ project }: { project: Project | null }) {
         </div>
       )}
 
+      {/* T12 Auditable Method x Task/Dataset Evaluation Matrix Heatmap */}
+      {matrix && matrix.methods.length > 0 && matrix.tasks.length > 0 && (
+        <article className="panel" style={{ padding: 18, marginBottom: 22, overflowX: "auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+                Method × Task/Dataset Evaluation Matrix
+              </h3>
+              <p style={{ margin: "2px 0 0", fontSize: 12, color: "#64748b" }}>
+                Amber-outlined zero/sparse cells indicate statistically under-explored combinations (hypergeometric p-value &amp; PMI over {matrix.total_papers} papers). Click a cell to inspect.
+              </p>
+            </div>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #e2e8f0", color: "#475569" }}>Method \ Task</th>
+                {matrix.tasks.slice(0, 8).map((t) => (
+                  <th key={t} style={{ padding: "6px 8px", borderBottom: "1px solid #e2e8f0", color: "#334155", maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t}>
+                    {t}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {matrix.methods.slice(0, 8).map((m) => (
+                <tr key={m}>
+                  <td style={{ padding: "6px 8px", borderBottom: "1px solid #f1f5f9", fontWeight: 600, color: "#0f172a", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={m}>
+                    {m}
+                  </td>
+                  {matrix.tasks.slice(0, 8).map((t) => {
+                    const cell = matrix.cells.find((c) => c.method === m && c.task === t);
+                    const cnt = cell?.count ?? 0;
+                    const isVoid = Boolean(cell?.is_candidate_void);
+                    const bg = cnt === 0 ? (isVoid ? "#fffbeb" : "#f8fafc") : cnt === 1 ? "#dbeafe" : "#93c5fd";
+                    return (
+                      <td
+                        key={`${m}__${t}`}
+                        onClick={() => cell && setSelectedCell(cell)}
+                        style={{
+                          padding: "6px 8px",
+                          textAlign: "center",
+                          cursor: "pointer",
+                          background: bg,
+                          border: isVoid ? "2px dashed #f59e0b" : "1px solid #e2e8f0",
+                          fontWeight: isVoid || cnt > 0 ? 700 : 400,
+                          color: isVoid ? "#92400e" : "#1e293b",
+                        }}
+                      >
+                        {cnt}{isVoid ? " · void" : ""}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {selectedCell && (
+            <div style={{ marginTop: 10, padding: "8px 12px", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, color: "#334155" }}>
+              <strong>{selectedCell.method}</strong> × <strong>{selectedCell.task}</strong>: observed={selectedCell.count}, expected={selectedCell.expected}, PMI={selectedCell.pmi}, hypergeom p={selectedCell.hypergeom_p}.
+              {selectedCell.papers.length > 0 && (
+                <span> Papers: {selectedCell.papers.map((p) => p.title).join("; ")}</span>
+              )}
+            </div>
+          )}
+        </article>
+      )}
+
       {loading ? (
         <p style={{ color: "#64748b" }}>Synthesizing candidate gaps from paper limitations...</p>
       ) : gaps.length === 0 ? (
@@ -210,10 +285,25 @@ export function GapsPage({ project }: { project: Project | null }) {
                         borderRadius: 10,
                         background: "#dbeafe",
                         color: "#1d4ed8",
+                        marginRight: 8,
                       }}
                     >
                       Evidence Score: {g.evidence_strength.toFixed(2)}
                     </span>
+                    {g.status === "likely_addressed" && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: 10,
+                          background: "#fef3c7",
+                          color: "#92400e",
+                        }}
+                      >
+                        Likely Addressed Externally
+                      </span>
+                    )}
                   </div>
 
                   {/* Feedback Controls */}
