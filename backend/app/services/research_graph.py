@@ -12,6 +12,8 @@ import networkx as nx
 from sqlalchemy.orm import Session
 
 from app import models
+from app.dsa.graph import Graph as DSAGraph
+from app.dsa.shortest_path import dijkstra
 from app.services.constants import RELATION_CITES
 
 
@@ -152,27 +154,28 @@ class NetworkXGraphService:
 
     @staticmethod
     def explain_path(G: nx.DiGraph, source_id: int, target_id: int) -> dict[str, Any] | None:
-        """Find and explain the shortest path between two papers."""
+        """Find and explain the lowest-cost path between two papers using hand-built Dijkstra."""
         if not G.has_node(source_id) or not G.has_node(target_id):
             return None
 
-        # Undirected edges can be traversed in either direction for path explanation
-        traversal_graph = nx.DiGraph()
-        traversal_graph.add_nodes_from(G.nodes(data=True))
+        # Build hand-built weighted traversal graph (citation cost=0.1, similarity cost=1-score)
+        dsa_graph = DSAGraph(directed=True)
+        for nid, attrs in G.nodes(data=True):
+            dsa_graph.add_node(nid, **attrs)
         for u, v, data in G.edges(data=True):
-            traversal_graph.add_edge(u, v, **data)
+            dsa_graph.add_edge(u, v, **data)
             if not data.get("directed", True):
-                traversal_graph.add_edge(v, u, **data)
+                dsa_graph.add_edge(v, u, **data)
 
-        try:
-            path_nodes = nx.shortest_path(traversal_graph, source=source_id, target=target_id)
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
+        result = dijkstra(dsa_graph, source_id, target_id, use_semantic_cost=True)
+        if result is None:
             return None
+        total_cost, path_nodes = result
 
         path_edges = []
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
-            data = traversal_graph.get_edge_data(u, v) or {}
+            data = dsa_graph.get_edge_data(u, v) or {}
             path_edges.append({
                 "from": u,
                 "to": v,
@@ -184,6 +187,7 @@ class NetworkXGraphService:
         return {
             "path_nodes": path_nodes,
             "hops": len(path_nodes) - 1,
+            "total_cost": round(float(total_cost), 4),
             "edges": path_edges,
-            "explanation": f"Connected across {len(path_nodes) - 1} step(s) via documented relationships.",
+            "explanation": f"Connected across {len(path_nodes) - 1} step(s) (Dijkstra cost {round(float(total_cost), 3)}).",
         }

@@ -13,7 +13,7 @@
 - [x] **T5. Make the gap endpoint side-effect free** (`routes.py`, new migration, `GapsPage.tsx`)
 
 ### PHASE B — Hand-built Data Structures and Discrete Math
-- [ ] **T6. DS-1: `backend/app/dsa/` package, zero third-party graph libraries**
+- [x] **T6. DS-1: `backend/app/dsa/` package, zero third-party graph libraries**
 - [ ] **T7. DM-1: `backend/app/dm/` package & `docs/DM_PROOFS.md`**
 
 ### PHASE C — Graph and analytics improvements
@@ -78,3 +78,8 @@
 - **Changed**: Added Alembic migration `c3d4e5f60703_t5_gap_statement_hash_unique.py` (`statement_hash` column + unique constraint `uq_research_gaps_proj_ver_hash` on `(project_id, corpus_version, statement_hash)`); made `GET /projects/{id}/gaps` strictly read-only; added `POST /projects/{id}/gaps/detect` enqueuing `gaps_detect` job via `JobService`; deduplicated gaps at insert time in `gaps.py`; updated `GapsPage.tsx` with Detect Gaps button & live job progress polling.
 - **Tests**: `python -m pytest tests/ -q`: 34 passed; `npm --prefix frontend run build` passed.
 - **Acceptance**: `alembic upgrade/downgrade/upgrade` succeeded; `test_get_gaps_is_strictly_read_only`, `test_post_gaps_detect_enqueues_job`, and DB unique constraint `IntegrityError` test all passed. **PASS**.
+
+### T6 — DS-1: Hand-built `backend/app/dsa/` package
+- **Changed**: Implemented `graph.py`, `union_find.py`, `topo.py` (Kahn's algorithm, `CycleError`, `is_unique_topological_order`), `heap.py` (`MinHeap`, `top_k`), `shortest_path.py` (Dijkstra with semantic edge cost), `mst.py` (Kruskal MST/MaxST), `trie.py`, and `hashtable.py` (open addressing linear probing). Integrated `HashTable` and `top_k` into `discovery.py`/`relations.py`, `dijkstra` into `research_graph.py`, and `Trie` into `GET /projects/{id}/autocomplete`. Added `backend/scripts/bench_dsa.py`.
+- **Tests**: `python -m pytest tests/ -q`: 41 passed (7 property-oracle tests x >=200 randomized cases each against `networkx`/`heapq`/`dict`). Benchmark (`bench_dsa.py`): HashTable 31.01ms vs dict 1.70ms (N=10k); top_k 9.93ms vs sorted 2.34ms (N=20k, k=25); Dijkstra 56.16ms vs nx 10.41ms (50 queries); Kruskal MST 5.09ms vs nx 4.80ms (V=300, E=1500).
+- **Acceptance**: `Select-String` for `networkx`/`sklearn` in `backend/app/dsa/` returned 0 matches. **PASS**.

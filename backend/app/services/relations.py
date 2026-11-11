@@ -15,6 +15,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app import models
+from app.dsa.heap import top_k
 from app.services.constants import (
     BASIS_CITATION_METADATA,
     BASIS_EMBEDDING_SIMILARITY,
@@ -247,8 +248,9 @@ class RelationsService:
                     for other_id in pids_with_emb
                     if other_id != pid
                 ]
-                scored.sort(key=lambda x: x[1], reverse=True)
-                top_k_map[pid] = {nid: sim for nid, sim in scored[:k_val]}
+                top_k_map[pid] = {
+                    nid: sim for nid, sim in top_k(scored, k_val, key=lambda x: x[1], reverse=True)
+                }
 
         # Mutual k-NN: edge (a, b) with a < b exists iff b in top_k(a) AND a in top_k(b)
         mutual_pairs: dict[tuple[int, int], float] = {}

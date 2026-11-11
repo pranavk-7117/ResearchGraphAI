@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.clients import ArxivClient, OpenAlexClient, RawCandidatePaper, SemanticScholarClient
 from app import models
+from app.dsa.hashtable import HashTable
+from app.dsa.heap import top_k
 from app.services.embeddings import EmbeddingService, cosine_similarity
 from app.services.llm import LLMService
 
@@ -128,7 +130,7 @@ class DiscoveryService:
         seen_dois: set[str] = set()
         seen_s2: set[str] = set()
         seen_arxiv: set[str] = set()
-        seen_hashes: set[str] = set()
+        seen_hashes = HashTable()
         unique: list[RawCandidatePaper] = []
 
         for c in candidates:
@@ -168,7 +170,7 @@ class DiscoveryService:
             if is_fuzzy_dup:
                 continue
 
-            seen_hashes.add(thash)
+            seen_hashes.put(thash, True)
             unique.append(c)
 
         return unique
@@ -247,9 +249,8 @@ class DiscoveryService:
 
             scored.append((candidate, total_score, score_components))
 
-        # Sort descending by total score
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[:limit]
+        # Select top `limit` descending using O(N log K) hand-built MinHeap top_k
+        return top_k(scored, limit, key=lambda x: x[1], reverse=True)
 
     def _persist_candidates(
         self,

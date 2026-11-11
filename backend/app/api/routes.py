@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import AuthenticatedUser, get_current_user, verify_project_ownership
 from app.database import get_db
+from app.dsa.trie import Trie
 from app.services.chat import ChatService
 from app.services.clustering import ClusteringService
 from app.services.compare import CompareService
@@ -407,6 +408,32 @@ def get_project_graph(
         total_nodes=len(nodes),
         total_edges=len(edges),
     )
+
+
+@router.get("/projects/{project_id}/autocomplete")
+def autocomplete_papers(
+    project_id: int,
+    q: str = Query("", min_length=0),
+    limit: int = Query(10, ge=1, le=50),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Prefix-Trie autocomplete over paper titles and author names in the project."""
+    project = verify_project_ownership(project_id, user, db)
+    rows = (
+        db.query(models.Paper.id, models.Paper.title, models.Paper.authors, models.Paper.year)
+        .join(models.ProjectPaper, models.ProjectPaper.paper_id == models.Paper.id)
+        .filter(models.ProjectPaper.project_id == project.id)
+        .all()
+    )
+    trie = Trie()
+    for pid, title, authors, year in rows:
+        if title:
+            trie.insert(title, {"type": "paper", "paper_id": pid, "title": title, "year": year})
+        for a in (authors or []):
+            if isinstance(a, dict) and a.get("name"):
+                trie.insert(a["name"], {"type": "author", "paper_id": pid, "title": title, "year": year})
+    return {"query": q, "results": trie.search_prefix(q, limit=limit)}
 
 
 # ==============================================================================
