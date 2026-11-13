@@ -239,10 +239,13 @@ export function GraphPage({ project }: { project: Project | null }) {
       hasFitRef.current = false;
       setLayoutMode(gData.nodes.length <= 60 ? "radial" : "force");
 
-      // G1: Default min edge weight percentile so edges <= 3 * nodes to prevent initial hairball
+      // G1: Default min edge weight percentile so semantic edges <= 3 * nodes to prevent initial hairball
       if (gData.nodes.length > 0 && gData.edges.length > 3 * gData.nodes.length) {
         const simEdges = gData.edges
-          .filter((e) => e.relation_type !== "cites")
+          .filter((e) => {
+            const l = e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic");
+            return l === "semantic";
+          })
           .map((e) => e.score || 0.0)
           .sort((a, b) => b - a);
         const maxNonCitation = Math.max(0, 3 * gData.nodes.length - gData.edges.filter((e) => e.relation_type === "cites").length);
@@ -341,7 +344,7 @@ export function GraphPage({ project }: { project: Project | null }) {
       if (layer === "citation" && !enabledLayers.citation) return false;
       if (layer === "coupling" && !enabledLayers.coupling) return false;
       if (layer === "semantic" && !enabledLayers.semantic) return false;
-      if ((e.score || 0) < minEdgeWeight && layer !== "citation") return false;
+      if (layer === "semantic" && (e.score || 0) < minEdgeWeight) return false;
       return true;
     });
 
