@@ -3,6 +3,7 @@ Live PostgreSQL DBMS Tests for T15: Views, Materialized Views, Triggers, WITH RE
 """
 
 import uuid
+import pytest
 from sqlalchemy import text
 
 from app import models
@@ -16,6 +17,7 @@ from app.services.dbms_queries import (
 )
 
 
+@pytest.mark.live_db
 def test_dbms_trigger_views_recursive_cte_and_window_rank():
     """Exercise live Supabase PostgreSQL trigger, views, MV, WITH RECURSIVE vs BFS, and RANK() OVER."""
     db = SessionLocal()

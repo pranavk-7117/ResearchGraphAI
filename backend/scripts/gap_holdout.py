@@ -196,6 +196,17 @@ def run_holdout(k: int = 3, limit: int = 25, seed: int = 42) -> dict[str, Any]:
     overall_gap_p = round(total_gap_hits / total_gap_pred, 3) if total_gap_pred else 0.0
     overall_rand_p = round(total_rand_hits / total_rand_pred, 3) if total_rand_pred else 0.0
 
+    fisher_p = None
+    try:
+        from scipy.stats import fisher_exact
+        _, p_val = fisher_exact([
+            [total_gap_hits, max(0, total_gap_pred - total_gap_hits)],
+            [total_rand_hits, max(0, total_rand_pred - total_rand_hits)],
+        ])
+        fisher_p = round(float(p_val), 4)
+    except Exception:
+        pass
+
     summary = {
         "cutoff_year_T": cutoff_t,
         "validation_window_H": 3,
@@ -203,6 +214,8 @@ def run_holdout(k: int = 3, limit: int = 25, seed: int = 42) -> dict[str, Any]:
         "num_topics": len(per_topic),
         "overall_gap_precision_at_k": overall_gap_p,
         "overall_random_precision_at_k": overall_rand_p,
+        "fisher_exact_p_value": fisher_p,
+        "statistically_significant": bool(fisher_p is not None and fisher_p < 0.05),
         "total_predicted_checked": total_gap_pred,
         "total_predicted_addressed_post_t": total_gap_hits,
         "total_random_checked": total_rand_pred,
@@ -223,7 +236,8 @@ def run_holdout(k: int = 3, limit: int = 25, seed: int = 42) -> dict[str, Any]:
         "# T12b Temporal Holdout Gap Validation Summary",
         "",
         f"- **Cutoff Year (T)**: `{cutoff_t}` | **Validation Window**: `{cutoff_t + 1}`–`{current_year}` (`H = 3` years)",
-        f"- **Overall Matrix Gap Precision@{k}**: **{overall_gap_p:.3f}** ({total_gap_hits}/{total_gap_pred}) vs **Random Empty Cell Baseline**: **{overall_rand_p:.3f}** ({total_rand_hits}/{total_rand_pred})",
+        f"- **Overall Matrix Gap Precision@{k}**: **{overall_gap_p:.3f}** ({total_gap_hits}/{total_gap_pred}) vs **Random Empty Cell Baseline**: **{overall_rand_p:.3f}** ({total_rand_hits}/{total_rand_pred})"
+        + (f" (Fisher exact p = {fisher_p}, {'significant p < 0.05' if fisher_p and fisher_p < 0.05 else 'not statistically significant'})" if fisher_p is not None else ""),
         "",
         "| Topic | Domain | Pre-T Papers | Pairs Extracted | Matrix Void Precision@K | Random Baseline |",
         "|---|---|---|---|---|---|",

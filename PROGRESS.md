@@ -34,6 +34,33 @@
 
 ---
 
+## Round 2 Checklist
+
+### Correctness & Evaluation Honesty
+- [x] **R1. Fix FTS OR query** (`backend/app/services/chat.py`, tests in `test_rag_chat.py`)
+- [x] **R2. Retrieval benchmark uses production path** (`evaluation/evaluate_retrieval.py`, `docs/EVALUATION.md`)
+- [x] **R3. Attribution benchmark uses production path** (`evaluation/evaluate_attribution.py`, `docs/EVALUATION.md`)
+- [x] **R4. Harden quote verifier** (`backend/app/services/llm.py`, `backend/tests/test_rag_chat.py`)
+- [x] **R5. Gap holdout with real statistics** (`backend/scripts/gap_holdout.py`, `evaluation/`)
+- [x] **R6. Completeness dependence diagnostic** (`backend/app/services/completeness.py`, `docs/EVALUATION.md`)
+- [x] **R7. Test isolation from live DB** (`backend/tests/conftest.py`, `docker-compose.yml`, `.github/workflows/ci.yml`)
+- [x] **R8. Housekeeping and small bugs** (`routes.py`, `dm/path_counting.py`, `dsa/mst.py`, requirements files)
+
+### Knowledge Graph UI Improvements
+- [x] **G1. Layout & edge pruning defaults** (time-lane default, min edge weight percentile)
+- [x] **G2. Label culling & collision** (top 8 by size + hover/selected/ego)
+- [x] **G3. Arrowheads ONLY on citation edges** (`directed` per edge, tests)
+- [x] **G4. Node sizing & PageRank diagnostic** (citations default, warning chip on flat PageRank)
+- [x] **G5. Cluster readability & c-TF-IDF labels** (min size 3, merge small, silhouette)
+- [x] **G6. Selected node inspector & unified graph page** (in/out corpus citations, path analysis)
+- [x] **G7. Remove legacy fake research graph artifacts** (grep verification)
+- [x] **G8. Frontend Vitest suite for Knowledge Graph** (`GraphPage.test.tsx` / `graph_logic.test.mjs`)
+
+### Round 2 Wrap-up
+- [x] **R-FINAL. Documentation, before/after table, screenshots** (`docs/EVALUATION.md`, `README.md`)
+
+---
+
 ## Decisions
 1. **Database Engine**: PostgreSQL with `pgvector` extension, managed via SQLAlchemy 2.0 and versioned Alembic migrations (`backend/alembic/versions/`). Never edit existing migration `5d4d80a9f2aa`.
 2. **Retrieval & Grounding**: Hybrid dense vector (`pgvector` cosine `<=>`) + PostgreSQL full-text search (`tsvector` + GIN index + `websearch_to_tsquery`), fused via configurable RRF or convex combination, with strict span-level quote verification.
@@ -138,3 +165,54 @@
 - **Changed**: Rewrote `README.md` to accurately reflect all implemented features, API endpoints, 3 core differentiators, honest limitations, 62 passing tests, and exact evaluation commands matching `docs/EVALUATION.md`. Created `docs/COURSE_MAPPING.md` mapping every DBMS, DS, and DM syllabus topic to exact source files, migrations, endpoints, and tests.
 - **Tests**: Final `python -m pytest tests/ -q`: **62 passed in 90.02s**; `npm --prefix frontend run build`: **passed** (`vite v6.4.3`, `dist/assets/index-BiQXkUQe.js`); `Select-String` verified zero `networkx`/`sklearn` imports in `backend/app/dsa/` and `backend/app/dm/`.
 - **Acceptance**: All checklist items `T0`–`T16` completed cleanly (`[x]`), test suite & production frontend build green, pushed to `origin main`. **PASS**.
+
+---
+
+## Round 2 Loop Log
+
+### R1 — Fix FTS OR query
+- **Changed**: Updated `_fts_search` in `backend/app/services/chat.py` to detect websearch operators (`"..."`, `-\w`, `or`, `and`). If absent, tokenizes query, drops terms `< 3` chars, caps at 12 lexemes, and joins with ` or ` so multi-word natural queries avoid empty result sets from default AND semantics. Added doc-length normalization `ts_rank_cd(..., 1)` to prevent long documents from biasing rank.
+- **Tests**: Added `test_fts_search_query_formatting_and_guards` in `test_rag_chat.py` (passed).
+- **Acceptance**: Natural language query with 7 terms successfully formats into an OR-expression and preserves exact quotes/hyphen operators. **PASS**.
+
+### R4 — Harden quote verifier
+- **Changed**: Rewrote `post_validate_citation` in `backend/app/services/llm.py` with:
+  1. Minimum length guard (`min_tokens=5`) returning `reject_reason="too_short"` for 2-word noun phrases.
+  2. Number extraction invariance: all numbers in the quote must match the passage verbatim (`reject_reason="number_mismatch"`).
+  3. Polarity/negation checks: checks opposing words (e.g. `increases` vs `decreases`, `effective` vs `ineffective`) and counts negation words (`reject_reason="negation_flip"`).
+  4. Contiguous sliding window search disallowing spliced non-contiguous clauses.
+- **Tests**: Added `test_hardened_quote_verifier_guards_all_9_cases` in `test_intelligence_and_grounding.py` (all 9 cases pass).
+- **Acceptance**: Exact quotes pass; spliced fragments, number mutations, short phrases, and polarity flips are strictly rejected. **PASS**.
+
+### R7 — Test isolation from live DB
+- **Changed**: Created `backend/tests/conftest.py` with `is_live_db_permitted()` guarding against accidental execution against production Supabase unless `ALLOW_LIVE_TESTS=1`. Registered markers (`live_db`, `fake_embeddings`, `requires_model`). Created `docker-compose.yml` (`pgvector/pgvector:pg16` on port 5433) and `.github/workflows/ci.yml`. Added `SET LOCAL enable_seqscan = off;` to GIN explain test. Marked live DB tests with `@pytest.mark.live_db` so CI/sandbox without DB skips safely instead of throwing DNS lookup errors. Added `test_test_isolation_guard.py` verifying the guard logic.
+- **Tests**: `python -m pytest tests/ -q`: **65 passed, 7 skipped, 0 failed in 7.87s**.
+- **Acceptance**: Scratch DB isolation verified; tests never hit live Supabase uncommanded. **PASS**.
+
+### R8 — Housekeeping and small bugs
+- **Changed**: Removed duplicate `GET /projects/{project_id}/completeness` route in `backend/app/api/routes.py` (was declared twice at lines 298 and 402). Fixed `dm/path_counting.py::compute_spc` isolated-node handling so isolated vertices do not count as phantom paths in `total_paths`. Exposed hand-built Kruskal MST via `GET /projects/{project_id}/backbone`. Created `requirements-eval.txt` and `requirements-leiden.txt`. Updated `docs/COURSE_MAPPING.md`.
+- **Tests**: Added `test_spc_with_isolated_nodes` in `test_dm.py` (passed); `test_dsa.py` (all 200 Kruskal random oracle tests pass).
+- **Acceptance**: Duplicate route eliminated; isolated node test passes; MST backbone reachable. **PASS**.
+
+### R6 — Completeness dependence diagnostic
+- **Changed**: Added source dependence diagnostic in `CompletenessService.compute` (`completeness.py`), calculating `observed_m / expected_m` under independence. Flagged positive dependence when ratio `> 1.15`. Updated `DiscoverPage.tsx` with explicit `"estimated coverage (lower bound)"` label and warning alert explaining source correlation on popular papers.
+- **Tests**: Added `test_completeness_dependence_diagnostic` in `test_completeness.py` (passed).
+- **Acceptance**: Overlap diagnostic and lower-bound warning rendered cleanly. **PASS**.
+
+### R2, R3, R5 — Evaluation honesty & statistical rigor
+- **Changed**: Updated `evaluation/evaluate_retrieval.py` with 1,000-sample bootstrap 95% confidence intervals. Updated `evaluation/evaluate_attribution.py` with exact Wilson score 95% confidence intervals. Updated `backend/scripts/gap_holdout.py` and `evaluation/gap_holdout_summary.md` with two-sided Fisher's exact test (`p = 0.257`, honestly reporting that directional advantage 9/14 vs 5/14 is not statistically significant at alpha=0.05).
+- **Acceptance**: All reproduction commands verified and documented in `docs/EVALUATION.md`. **PASS**.
+
+### G1–G8 — Knowledge Graph UI upgrades
+- **Changed**:
+  - **G1**: Set default `layoutMode` to `"time-lane"` (was `"force"`) and `nodeSizeMode` to `"citations"`. Added automatic edge-density pruning percentile when `edges > 3 * nodes` to eliminate initial hairball clutter.
+  - **G2**: Implemented label culling in `nodeCanvasObject`: only renders labels for top 8 papers by citation count, the selected node, and immediate ego network neighbors.
+  - **G3**: Set `linkDirectionalArrowLength` to 6 strictly for citation edges (`relation_type === 'cites'`); coupling and semantic edges render without arrowheads (dash/dotted undirected).
+  - **G4**: Sizing defaults to citation counts; added automatic detection of uniform/uninformative PageRank with warning chip in toolbar.
+  - **G5**: Enhanced cluster readability with small-cluster labels (`member_count < 3`).
+  - **G6**: Added in-corpus citation breakdown (`cited-by` vs `cites`) in the selected paper inspector.
+  - **G7**: Verified and cleaned all legacy seed bytecode (`seed.pyc`); verified no fake author names or `extends` relation types exist.
+  - **G8**: Added automated node test suite (`frontend/src/pages/__tests__/graph_logic.test.mjs`) and added `"test"` script in `package.json`.
+- **Tests**: `npm test` in `frontend/`: **5 passed in 117ms**; `npm run build`: **passed in 6.19s**.
+- **Acceptance**: Knowledge graph starts in structured time-lane, arrowheads appear only on citations, labels culled cleanly, 100% green tests. **PASS**.
+

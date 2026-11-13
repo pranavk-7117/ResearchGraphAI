@@ -1,0 +1,4 @@
+# Optional C-accelerated Leiden and Louvain community detection
+# Requires C++ build tools on Windows. Gracefully falls back to NetworkX Louvain when absent.
+igraph>=0.11.0
+leidenalg>=0.10.0

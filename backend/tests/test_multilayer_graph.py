@@ -102,6 +102,11 @@ def test_graph_structural_metrics_and_api_layers():
     out = get_project_graph(project_id=7, user=AuthenticatedUser(id="u1"), db=db)
     layers = {e.relation_type: e.layer for e in out.edges}
     assert layers == {RELATION_CITES: "citation", RELATION_COUPLING: "coupling", RELATION_SIMILAR: "semantic"}
-    coupling_edge = next(e for e in out.edges if e.layer == "coupling")
+    cites_edge = next(e for e in out.edges if e.relation_type == RELATION_CITES)
+    coupling_edge = next(e for e in out.edges if e.relation_type == RELATION_COUPLING)
+    similar_edge = next(e for e in out.edges if e.relation_type == RELATION_SIMILAR)
+    assert cites_edge.directed is True
+    assert coupling_edge.directed is False
+    assert similar_edge.directed is False
     assert coupling_edge.shared_references == ["10.1/shared"]
     assert coupling_edge.score == 0.5

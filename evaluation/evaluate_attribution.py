@@ -15,6 +15,7 @@ Usage:
 """
 
 import json
+import math
 from pathlib import Path
 import re
 import sys
@@ -47,6 +48,17 @@ OFF_TOPIC_QUESTIONS = [
     "Compare medieval Japanese katana differential clay tempering temperatures.",
     "What zoning laws regulate coastal high-rise setbacks in Miami Beach?",
 ]
+
+
+def wilson_score_interval(successes: int, total: int, z: float = 1.96) -> list[float]:
+    """Compute exact Wilson score 95% confidence interval for a proportion."""
+    if total <= 0:
+        return [0.0, 0.0]
+    p_hat = successes / float(total)
+    denom = 1.0 + (z**2) / total
+    center = (p_hat + (z**2) / (2 * total)) / denom
+    margin = (z / denom) * math.sqrt((p_hat * (1.0 - p_hat) / total) + (z**2) / (4.0 * total**2))
+    return [round(max(0.0, center - margin), 4), round(min(1.0, center + margin), 4)]
 
 
 def tokenize(text: str) -> set[str]:
@@ -203,9 +215,12 @@ def run_attribution_eval() -> dict[str, Any]:
         "total_quotes_extracted": total_quotes_extracted,
         "verified_quotes": verified_quotes,
         "quote_verification_precision": precision,
+        "quote_verification_precision_ci_95": wilson_score_interval(verified_quotes, total_quotes_extracted),
         "answers_with_at_least_one_verified_quote_rate": answer_cov,
+        "answers_with_verified_quote_ci_95": wilson_score_interval(answers_with_verified, len(domain_questions)),
         "off_topic_questions": len(OFF_TOPIC_QUESTIONS),
         "off_topic_refusal_rate": refusal_rate,
+        "off_topic_refusal_ci_95": wilson_score_interval(off_topic_refused, len(OFF_TOPIC_QUESTIONS)),
         "elapsed_seconds": round(time.time() - t0, 2),
         "samples": per_question_log[:10],
     }

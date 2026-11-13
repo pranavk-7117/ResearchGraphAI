@@ -15,6 +15,7 @@ def db():
     session.close()
 
 
+@pytest.mark.live_db
 def test_job_lifecycle_and_atomic_locking(db):
     prof_id = "test-jobs-user"
     prof = db.query(models.Profile).filter(models.Profile.id == prof_id).first()

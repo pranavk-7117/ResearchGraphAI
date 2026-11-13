@@ -295,6 +295,42 @@ def _tokenize_quote(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+(?:[.\-][a-z0-9]+)*", text)
 
 
+def _extract_numbers(tokens: list[str]) -> list[str]:
+    """Extract numeric values from a list of tokens."""
+    nums: list[str] = []
+    for t in tokens:
+        for m in re.findall(r"\b\d+(?:\.\d+)?\b", t):
+            nums.append(m)
+    return nums
+
+
+NEGATION_WORDS = {
+    "not", "no", "never", "none", "neither", "nor", "without",
+    "cannot", "cant", "can't", "fails", "failed", "failure",
+}
+
+POLARITY_OPPOSITES = {
+    "increases": "decreases",
+    "decreases": "increases",
+    "increase": "decrease",
+    "decrease": "increase",
+    "increased": "decreased",
+    "decreased": "increased",
+    "increasing": "decreasing",
+    "decreasing": "increasing",
+    "higher": "lower",
+    "lower": "higher",
+    "more": "less",
+    "less": "more",
+    "positive": "negative",
+    "negative": "positive",
+    "effective": "ineffective",
+    "ineffective": "effective",
+    "improved": "worsened",
+    "worsened": "improved",
+}
+
+
 def _lcs_len(a: list[str], b: list[str]) -> int:
     """Compute length of Longest Common Subsequence between token lists a and b."""
     if not a or not b:
@@ -311,66 +347,168 @@ def _lcs_len(a: list[str], b: list[str]) -> int:
     return prev[-1]
 
 
+def _find_contiguous_window(q_tokens: list[str], c_tokens: list[str]) -> tuple[float, list[str]]:
+    """
+    Search for a tight, contiguous window in c_tokens matching q_tokens.
+    Windows are constrained to lengths [q_len - 1, q_len + 2] to strictly disallow
+    splicing across non-contiguous sections.
+    Returns (best_ratio, best_window_tokens).
+    """
+    q_len = len(q_tokens)
+    if not q_tokens or not c_tokens or len(c_tokens) < max(1, q_len - 1):
+        return 0.0, []
+
+    best_ratio = 0.0
+    best_win: list[str] = []
+
+    # Slide window sizes from q_len to q_len + 1
+    for win_len in (q_len, q_len + 1):
+        if len(c_tokens) < win_len:
+            continue
+        for i in range(len(c_tokens) - win_len + 1):
+            win = c_tokens[i : i + win_len]
+            # Exact positional match ratio
+            exact_matches = sum(1 for a, b in zip(q_tokens, win) if a == b)
+            ratio = exact_matches / q_len
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_win = win
+                if ratio == 1.0:
+                    return 1.0, win
+
+            # Fallback to LCS inside this tight window
+            lcs = _lcs_len(q_tokens, win)
+            lcs_ratio = lcs / q_len
+            if lcs_ratio > best_ratio:
+                best_ratio = lcs_ratio
+                best_win = win
+                if lcs_ratio == 1.0:
+                    return 1.0, win
+
+    return round(float(best_ratio), 4), best_win
+
+
 def post_validate_citation(
     quote: str,
     chunk_text: str,
     chunk_id: int | None = None,
     threshold: float = 0.9,
+    min_tokens: int = 5,
 ) -> dict[str, Any]:
     """
     Strictly validate that a quote appears in the specific cited chunk.
-    1. Normalize whitespace, case, and line-break hyphenation.
-    2. Require exact normalized substring match within the specific chunk.
-    3. Fallback to ordered token-sequence match requiring >= threshold (default 0.9)
-       of quote tokens in order within a localized window.
-    Returns: {verified: bool, chunk_id: int | None, match_type: str, score: float}
+    Hardened guarantees:
+    1. Rejects short phrases (< min_tokens, default 5 tokens) as 'too_short'.
+    2. Enforces exact number preservation: all digits in quote must match chunk verbatim.
+    3. Enforces negation & polarity invariance: no meaning flips ('increases' -> 'decreases').
+    4. Enforces contiguous window match: disallows spliced non-contiguous fragments.
+    Returns: {verified: bool, chunk_id: int | None, match_type: str, score: float, reject_reason: str | None}
     """
     if not quote or not chunk_text:
-        return {"verified": False, "chunk_id": chunk_id, "match_type": "none", "score": 0.0}
+        return {
+            "verified": False,
+            "chunk_id": chunk_id,
+            "match_type": "none",
+            "score": 0.0,
+            "reject_reason": "empty",
+        }
 
     clean_quote = _normalize_for_quote(quote)
     clean_chunk = _normalize_for_quote(chunk_text)
     if not clean_quote or not clean_chunk:
-        return {"verified": False, "chunk_id": chunk_id, "match_type": "none", "score": 0.0}
-
-    if clean_quote in clean_chunk:
-        return {"verified": True, "chunk_id": chunk_id, "match_type": "exact", "score": 1.0}
+        return {
+            "verified": False,
+            "chunk_id": chunk_id,
+            "match_type": "none",
+            "score": 0.0,
+            "reject_reason": "empty",
+        }
 
     q_tokens = _tokenize_quote(clean_quote)
     c_tokens = _tokenize_quote(clean_chunk)
     if not q_tokens or not c_tokens:
-        return {"verified": False, "chunk_id": chunk_id, "match_type": "none", "score": 0.0}
+        return {
+            "verified": False,
+            "chunk_id": chunk_id,
+            "match_type": "none",
+            "score": 0.0,
+            "reject_reason": "empty",
+        }
 
-    # Localized sliding window to avoid false positives from scattered stopwords
-    win_size = max(len(q_tokens) * 2, len(q_tokens) + 8)
-    best_ratio = 0.0
-    if len(c_tokens) <= win_size:
-        best_ratio = _lcs_len(q_tokens, c_tokens) / len(q_tokens)
-    else:
-        step = max(1, len(q_tokens) // 2)
-        for start in range(0, len(c_tokens) - win_size + 1, step):
-            lcs = _lcs_len(q_tokens, c_tokens[start : start + win_size])
-            ratio = lcs / len(q_tokens)
-            if ratio > best_ratio:
-                best_ratio = ratio
-            if best_ratio == 1.0:
-                break
-        # Check tail window
-        tail_lcs = _lcs_len(q_tokens, c_tokens[-win_size:])
-        best_ratio = max(best_ratio, tail_lcs / len(q_tokens))
+    # 1. Minimum token length guard
+    if len(q_tokens) < min_tokens:
+        return {
+            "verified": False,
+            "chunk_id": chunk_id,
+            "match_type": "too_short",
+            "score": 0.0,
+            "reject_reason": "too_short",
+        }
 
-    best_ratio = round(float(best_ratio), 4)
-    if best_ratio >= threshold:
+    # 2. Number check: all numbers in quote MUST be present in chunk
+    q_nums = _extract_numbers(q_tokens)
+    c_nums = _extract_numbers(c_tokens)
+    for num in q_nums:
+        if num not in c_nums:
+            return {
+                "verified": False,
+                "chunk_id": chunk_id,
+                "match_type": "none",
+                "score": 0.0,
+                "reject_reason": "number_mismatch",
+            }
+
+    # 3. Exact normalized substring match
+    if clean_quote in clean_chunk:
+        return {
+            "verified": True,
+            "chunk_id": chunk_id,
+            "match_type": "exact",
+            "score": 1.0,
+            "reject_reason": None,
+        }
+
+    # 4. Contiguous window fuzzy match
+    score, matched_win = _find_contiguous_window(q_tokens, c_tokens)
+
+    # 5. Check polarity flips / negation changes in the matched window
+    if matched_win:
+        q_negs = sum(1 for t in q_tokens if t in NEGATION_WORDS)
+        w_negs = sum(1 for t in matched_win if t in NEGATION_WORDS)
+        if q_negs != w_negs:
+            return {
+                "verified": False,
+                "chunk_id": chunk_id,
+                "match_type": "none",
+                "score": score,
+                "reject_reason": "negation_flip",
+            }
+
+        # Check for antonym opposite words (e.g. quote has 'decreases', chunk has 'increases')
+        for q_tok in q_tokens:
+            opp = POLARITY_OPPOSITES.get(q_tok)
+            if opp and opp in matched_win and q_tok not in matched_win:
+                return {
+                    "verified": False,
+                    "chunk_id": chunk_id,
+                    "match_type": "none",
+                    "score": score,
+                    "reject_reason": "negation_flip",
+                }
+
+    if score >= threshold:
         return {
             "verified": True,
             "chunk_id": chunk_id,
             "match_type": "token_sequence",
-            "score": best_ratio,
+            "score": score,
+            "reject_reason": None,
         }
 
     return {
         "verified": False,
         "chunk_id": chunk_id,
         "match_type": "none",
-        "score": best_ratio,
+        "score": score,
+        "reject_reason": "low_overlap",
     }

@@ -48,6 +48,75 @@ def test_post_validate_citation_verification():
     assert post_validate_citation("", real_chunk, chunk_id=42)["verified"] is False
 
 
+def test_hardened_quote_verifier_guards_all_9_cases():
+    """Verify R4: Hardened quote verifier checks numbers, negations, polarity, length, and contiguous windows."""
+    passage = (
+        "In our multi-center clinical cohort of 142 diabetic patients, the smart insole "
+        "consistently decreases peak forefoot plantar pressure by 34.5% during continuous walking."
+    )
+
+    # 1. Exact match (>= 6 tokens) -> PASS
+    res1 = post_validate_citation(
+        "smart insole consistently decreases peak forefoot plantar pressure",
+        passage,
+        chunk_id=1,
+    )
+    assert res1["verified"] is True
+    assert res1["match_type"] == "exact"
+    assert res1["reject_reason"] is None
+
+    # 2. Small typo / OCR noise with >= 0.9 ratio -> PASS
+    res2 = post_validate_citation(
+        "smart insole consistently decreases peak forefoot plantar pressure by 34.5%",
+        passage,
+        chunk_id=1,
+    )
+    assert res2["verified"] is True
+    assert res2["reject_reason"] is None
+
+    # 3. Too short (< 6 tokens) -> REJECT
+    res3 = post_validate_citation("smart insole pressure", passage, chunk_id=1)
+    assert res3["verified"] is False
+    assert res3["reject_reason"] == "too_short"
+
+    # 4. Spliced non-contiguous fragments -> REJECT
+    spliced = "clinical cohort of diabetic patients during continuous walking"
+    res4 = post_validate_citation(spliced, passage, chunk_id=1)
+    assert res4["verified"] is False
+    assert res4["reject_reason"] in ("low_overlap", "none")
+
+    # 5. Number mismatch (34.5% changed to 54.5%) -> REJECT
+    num_mismatch = "consistently decreases peak forefoot plantar pressure by 54.5% during"
+    res5 = post_validate_citation(num_mismatch, passage, chunk_id=1)
+    assert res5["verified"] is False
+    assert res5["reject_reason"] == "number_mismatch"
+
+    # 6. Polarity flip ("increases" vs "decreases") -> REJECT
+    polarity_flip = "smart insole consistently increases peak forefoot plantar pressure by 34.5%"
+    res6 = post_validate_citation(polarity_flip, passage, chunk_id=1)
+    assert res6["verified"] is False
+    assert res6["reject_reason"] == "negation_flip"
+
+    # 7. Negation insertion ("did not consistently decrease") -> REJECT
+    neg_flip = "the smart insole not consistently decreases peak forefoot plantar pressure"
+    res7 = post_validate_citation(neg_flip, passage, chunk_id=1)
+    assert res7["verified"] is False
+    assert res7["reject_reason"] == "negation_flip"
+
+    # 8. Paraphrase / low token overlap -> REJECT
+    res8 = post_validate_citation("wearable sensors demonstrated significant therapeutic value in diabetes", passage, chunk_id=1)
+    assert res8["verified"] is False
+    assert res8["reject_reason"] in ("low_overlap", "none")
+
+    # 9. Empty quote or empty passage -> REJECT
+    res9a = post_validate_citation("", passage, chunk_id=1)
+    res9b = post_validate_citation("valid quote that is long enough", "", chunk_id=1)
+    assert res9a["verified"] is False
+    assert res9a["reject_reason"] == "empty"
+    assert res9b["verified"] is False
+    assert res9b["reject_reason"] == "empty"
+
+
 def test_quote_in_different_chunk_fails_for_claimed_chunk():
     """A quote that exists only in chunk 2 must fail when claimed for chunk 1."""
     db = MagicMock()

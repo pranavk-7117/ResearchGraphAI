@@ -115,6 +115,7 @@ def test_citation_fuzzy_matching_strictness():
     assert svc._resolve_reference(ref_ok, lookups) == 10
 
 
+@pytest.mark.live_db
 def test_citation_and_similarity_relations(db):
     db.query(models.PaperReference).filter(models.PaperReference.raw_reference == "Kipf and Welling 2017 GCN").delete()
     db.query(models.Paper).filter(models.Paper.doi.in_(["10.1000/gcn", "10.1000/gat"])).delete()
@@ -165,6 +166,7 @@ def test_citation_and_similarity_relations(db):
         db.commit()
 
 
+@pytest.mark.live_db
 def test_build_relations_40_papers_bounded_sql_queries(db):
     """Acceptance: relation building for 40 papers issues bounded O(N) SQL queries and undirected mutual k-NN edges."""
     prof_id = "test-t4-40papers-user"

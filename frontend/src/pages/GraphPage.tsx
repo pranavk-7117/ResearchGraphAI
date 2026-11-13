@@ -163,9 +163,9 @@ export function GraphPage({ project }: { project: Project | null }) {
   const [error, setError] = useState<string | null>(null);
 
   // Toolbar state
-  const [layoutMode, setLayoutMode] = useState<"force" | "time-lane" | "radial" | "concentric">("force");
+  const [layoutMode, setLayoutMode] = useState<"force" | "time-lane" | "radial" | "concentric">("time-lane");
   const [colorMode, setColorMode] = useState<"cluster" | "citations" | "year">("cluster");
-  const [nodeSizeMode, setNodeSizeMode] = useState<"pagerank" | "citations" | "uniform">("pagerank");
+  const [nodeSizeMode, setNodeSizeMode] = useState<"pagerank" | "citations" | "uniform">("citations");
   const [enabledLayers, setEnabledLayers] = useState<{ citation: boolean; coupling: boolean; semantic: boolean }>({
     citation: true,
     coupling: true,
@@ -230,6 +230,21 @@ export function GraphPage({ project }: { project: Project | null }) {
       ]);
       setGraphData(gData);
       setClusters(cData);
+
+      // G1: Default min edge weight percentile so edges <= 3 * nodes to prevent initial hairball
+      if (gData.nodes.length > 0 && gData.edges.length > 3 * gData.nodes.length) {
+        const simEdges = gData.edges
+          .filter((e) => e.relation_type !== "cites")
+          .map((e) => e.score || 0.0)
+          .sort((a, b) => b - a);
+        const maxNonCitation = Math.max(0, 3 * gData.nodes.length - gData.edges.filter((e) => e.relation_type === "cites").length);
+        if (simEdges.length > maxNonCitation && maxNonCitation > 0) {
+          const threshold = simEdges[maxNonCitation - 1];
+          setMinEdgeWeight(Math.min(0.85, Math.max(0.35, Math.round(threshold * 20) / 20)));
+        } else {
+          setMinEdgeWeight(0.50);
+        }
+      }
 
       // Default select the most central / most cited paper
       if (gData.nodes.length > 0) {
@@ -330,6 +345,38 @@ export function GraphPage({ project }: { project: Project | null }) {
     const vals = graphData.nodes.map((n) => n.betweenness || 0).filter((v) => v > 0).sort((a, b) => b - a);
     if (vals.length === 0) return Infinity;
     return vals[Math.min(vals.length - 1, Math.max(0, Math.floor(vals.length * 0.25)))];
+  }, [graphData.nodes]);
+
+  // G2: Top 8 node IDs by size (citation count) for clean uncluttered label rendering
+  const top8NodeIds = useMemo(() => {
+    return new Set(
+      [...filteredData.nodes]
+        .sort((a: any, b: any) => (b.citation_count || 0) - (a.citation_count || 0))
+        .slice(0, 8)
+        .map((n: any) => n.id)
+    );
+  }, [filteredData.nodes]);
+
+  // G2: Immediate ego neighbors of selected node (always show their labels)
+  const egoNeighborIds = useMemo(() => {
+    if (!selectedNode) return new Set<number>();
+    const ids = new Set<number>();
+    filteredData.links.forEach((l: any) => {
+      const s = typeof l.source === "object" ? l.source.id : l.source;
+      const t = typeof l.target === "object" ? l.target.id : l.target;
+      if (s === selectedNode.id) ids.add(t);
+      if (t === selectedNode.id) ids.add(s);
+    });
+    return ids;
+  }, [selectedNode, filteredData.links]);
+
+  // G4: Uninformative PageRank detector (when citation graph is sparse or unconstructed)
+  const isPageRankUninformative = useMemo(() => {
+    if (graphData.nodes.length < 2) return false;
+    const prs = graphData.nodes.map((n) => n.pagerank || 0);
+    const minPr = Math.min(...prs);
+    const maxPr = Math.max(...prs);
+    return maxPr - minPr < 1e-4;
   }, [graphData.nodes]);
 
   // Apply Layout Transformations
@@ -442,6 +489,23 @@ export function GraphPage({ project }: { project: Project | null }) {
     }
     return 9;
   };
+
+  // In-corpus citation breakdown (cited-by vs cites within this corpus)
+  const inCorpusCitations = useMemo(() => {
+    if (!selectedNode) return { citedByCount: 0, citesCount: 0 };
+    let citedBy = 0;
+    let cites = 0;
+    const sId = Number(selectedNode.id);
+    for (const e of graphData.edges) {
+      if (e.relation_type === "cites") {
+        const src = Number(typeof e.source === "object" ? (e.source as any).id : e.source);
+        const tgt = Number(typeof e.target === "object" ? (e.target as any).id : e.target);
+        if (src === sId) cites++;
+        if (tgt === sId) citedBy++;
+      }
+    }
+    return { citedByCount: citedBy, citesCount: cites };
+  }, [selectedNode, graphData.edges]);
 
   // Connected papers to selected node ("Why connected?" evidence from real edges)
   const connectedNeighbors = useMemo(() => {
@@ -652,6 +716,24 @@ export function GraphPage({ project }: { project: Project | null }) {
               <option value="uniform">Uniform Size</option>
             </select>
           </div>
+
+          {/* G4 Uninformative PageRank indicator */}
+          {isPageRankUninformative && (
+            <span
+              style={{
+                fontSize: 10,
+                background: "#fef3c7",
+                color: "#92400e",
+                border: "1px solid #fde68a",
+                padding: "2px 7px",
+                borderRadius: 4,
+                fontWeight: 600,
+              }}
+              title="PageRank is uniform across papers due to sparse citations; sizing defaults to citation count."
+            >
+              PageRank uniform
+            </span>
+          )}
 
           {/* Trie Autocomplete Search bar */}
           <div style={{ position: "relative", marginLeft: 4 }}>
@@ -1054,9 +1136,12 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.textAlign = "center";
                   ctx.textBaseline = "middle";
                   ctx.fillText(label, node.x, bY + bH / 2);
-                } else if (globalScale >= 0.35) {
-                  // Clean text label below node
-                  const label = node.title.length > 26 ? `${node.title.slice(0, 24)}...` : node.title;
+                } else if (
+                  (top8NodeIds.has(node.id) || egoNeighborIds.has(node.id)) &&
+                  globalScale >= 0.25
+                ) {
+                  // G2: Only render labels for top 8 papers by citation and ego neighbors to avoid hairball
+                  const label = node.title.length > 24 ? `${node.title.slice(0, 22)}...` : node.title;
                   const fontSize = Math.max(9, 10 / Math.sqrt(globalScale));
                   ctx.font = `500 ${fontSize}px Inter, sans-serif`;
                   ctx.fillStyle = "#334155";
@@ -1217,8 +1302,8 @@ export function GraphPage({ project }: { project: Project | null }) {
                         {c.label}
                       </span>
                     </div>
-                    <span style={{ fontSize: 11, color: "#64748b", flexShrink: 0, marginLeft: 6 }}>
-                      {c.member_count} nodes
+                    <span style={{ fontSize: 11, color: c.member_count < 3 ? "#94a3b8" : "#64748b", flexShrink: 0, marginLeft: 6 }}>
+                      {c.member_count} {c.member_count === 1 ? "paper" : "papers"} {c.member_count < 3 ? "· small" : ""}
                     </span>
                   </button>
                 );
@@ -1320,9 +1405,9 @@ export function GraphPage({ project }: { project: Project | null }) {
                 {/* Metrics Grid (PageRank, Betweenness, k-Core, Burt's Constraint) */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
                   <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>
-                    <span style={{ fontSize: 10, color: "#64748b" }}>Citations · k-Core</span>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#0f172a" }}>
-                      {selectedNode.citation_count} · k={selectedNode.k_core ?? 0}
+                    <span style={{ fontSize: 10, color: "#64748b" }}>Citations (In-Corpus · Total)</span>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a" }}>
+                      {inCorpusCitations.citedByCount} cited-by · {selectedNode.citation_count} total
                     </div>
                   </div>
                   <div style={{ background: "#f8fafc", padding: "6px 8px", borderRadius: 6, border: "1px solid #e2e8f0" }}>

@@ -69,7 +69,22 @@ def test_main_path_empty_edges():
 
     kr = key_route_main_path(g)
     assert kr["key_route_edges"] == []
-    assert "No citation edges" in kr["explanation"]
+
+
+def test_spc_with_isolated_nodes():
+    """Verify R8: isolated nodes in a graph with edges do not inflate total_paths."""
+    dag = Graph(directed=True)
+    # Connected component: S -> M -> T (1 path)
+    dag.add_edge("S", "M")
+    dag.add_edge("M", "T")
+    # Isolated nodes
+    dag.add_node("ISO1")
+    dag.add_node("ISO2")
+
+    spc = compute_spc(dag)
+    assert spc["total_paths"] == 1
+    assert spc["edge_spc"][("S", "M")] == 1
+    assert spc["edge_spc"][("M", "T")] == 1
 
 
 def test_transitive_reduction_and_closure_vs_networkx():

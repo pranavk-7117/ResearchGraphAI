@@ -352,9 +352,26 @@ class ChatService:
         query: str,
         limit: int = 30,
     ) -> list[dict[str, Any]]:
-        """Full-text search using generated tsvector column + GIN index."""
+        """Full-text search using generated tsvector column + GIN index.
+
+        If query contains explicit websearch operators ("...", -term, ' or ', ' and '),
+        preserves exact semantics via websearch_to_tsquery.
+        Otherwise constructs an OR-query across the top 12 tokens (>= 3 chars)
+        to prevent multi-word natural queries from returning zero hits due to AND semantics.
+        Uses ts_rank_cd with normalization flag=1 (divided by 1 + ln(doc_length)).
+        """
         if not paper_ids or not query.strip():
             return []
+
+        q = query.strip()
+        has_operators = bool(re.search(r'["\']|-\w|\b(?:or|and|not)\b', q, re.IGNORECASE))
+        if has_operators:
+            ts_query_str = q
+        else:
+            tokens = [t for t in re.findall(r"[A-Za-z0-9]+", q) if len(t) >= 3][:12]
+            if not tokens:
+                return []
+            ts_query_str = " or ".join(tokens)
 
         fts_sql = text("""
             SELECT
@@ -367,7 +384,7 @@ class ChatService:
                 p.authors,
                 p.doi,
                 p.year,
-                ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', :query)) AS fts_rank
+                ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', :query), 1) AS fts_rank
             FROM paper_chunks c
             JOIN papers p ON p.id = c.paper_id
             WHERE c.paper_id IN :paper_ids
@@ -378,7 +395,7 @@ class ChatService:
 
         rows = db.execute(
             fts_sql,
-            {"query": query, "paper_ids": paper_ids, "limit": limit},
+            {"query": ts_query_str, "paper_ids": paper_ids, "limit": limit},
         ).fetchall()
 
         hits: list[dict[str, Any]] = []

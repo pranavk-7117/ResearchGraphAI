@@ -149,6 +149,18 @@ def compute_metrics(ranked_ids: list[str], rel_map: dict[str, int], k: int = 10)
     return ndcg, recall, mrr
 
 
+def bootstrap_ci(values: list[float], n_boot: int = 1000, alpha: float = 0.05) -> list[float]:
+    """Compute empirical bootstrap 95% confidence interval across query metrics."""
+    if not values:
+        return [0.0, 0.0]
+    rng = np.random.default_rng(42)
+    arr = np.array(values, dtype=np.float64)
+    means = [float(np.mean(rng.choice(arr, size=len(arr), replace=True))) for _ in range(n_boot)]
+    low = float(np.percentile(means, 100 * (alpha / 2)))
+    high = float(np.percentile(means, 100 * (1 - alpha / 2)))
+    return [round(low, 4), round(high, 4)]
+
+
 def run_retrieval_eval(max_queries: int = 300) -> dict[str, Any]:
     t0 = time.time()
     data_dir = ensure_scifact()
@@ -240,6 +252,7 @@ def run_retrieval_eval(max_queries: int = 300) -> dict[str, Any]:
         n = len(vals)
         summary_rows[name] = {
             "ndcg_at_10": round(sum(v[0] for v in vals) / n, 4),
+            "ndcg_ci_95": bootstrap_ci([v[0] for v in vals]),
             "recall_at_10": round(sum(v[1] for v in vals) / n, 4),
             "mrr_at_10": round(sum(v[2] for v in vals) / n, 4),
         }

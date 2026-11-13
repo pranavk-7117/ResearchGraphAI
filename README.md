@@ -33,7 +33,7 @@ ResearchGraphAI is an academic research workspace built with **FastAPI + SQLAlch
 - **Projects & DBMS Stats**: `POST/GET/DELETE /api/projects`, `GET /api/projects/{id}/stats`, `POST /api/projects/{id}/stats/refresh`
 - **Discovery & Completeness**: `POST /api/projects/{id}/discover`, `GET /api/projects/{id}/candidates`, `GET /api/projects/{id}/completeness`
 - **Processing & Jobs**: `POST /api/projects/{id}/select-candidates`, `POST /api/projects/{id}/process`, `GET /api/jobs/{job_id}`
-- **Graph, Clusters & Reading Paths**: `GET /api/projects/{id}/graph`, `POST /api/projects/{id}/clusters/recompute`, `GET /api/projects/{id}/cluster-representatives`, `GET /api/projects/{id}/autocomplete`, `GET /api/projects/{id}/hasse`, `GET /api/projects/{id}/reading-path`, `GET /api/projects/{id}/ancestors`
+- **Graph, Clusters & Reading Paths**: `GET /api/projects/{id}/graph`, `GET /api/projects/{id}/backbone`, `POST /api/projects/{id}/clusters/recompute`, `GET /api/projects/{id}/cluster-representatives`, `GET /api/projects/{id}/autocomplete`, `GET /api/projects/{id}/hasse`, `GET /api/projects/{id}/reading-path`, `GET /api/projects/{id}/ancestors`
 - **Evolution, Gaps & Matrix**: `GET /api/projects/{id}/evolution`, `GET /api/projects/{id}/gaps`, `POST /api/projects/{id}/gaps/detect`, `GET /api/projects/{id}/gap-matrix`, `POST /api/gaps/{gap_id}/feedback`
 - **RAG Chat & Manuscript Comparison**: `POST /api/projects/{id}/chat`, `POST /api/projects/{id}/upload-compare`, `GET /api/projects/{id}/analyses`
 
@@ -69,10 +69,11 @@ cd frontend && npm install && npm run dev -- --port 5174
 
 ## 4. Tests & Empirical Evaluation Reproduction
 
-### Automated Test Suite (**62 passing tests**)
-Covers unit tests, randomized property-oracle checks against `networkx`/`heapq`/`dict`, and live PostgreSQL integration tests (RLS/isolation, GIN FTS, `pgvector` HNSW, triggers, views, `WITH RECURSIVE`, `RANK() OVER`, unique constraints):
+### Automated Test Suite (**63 backend test functions + 5 frontend tests**)
+Covers unit tests, randomized property-oracle checks against `networkx`/`heapq`/`dict`, database isolation guards (protecting production Supabase), and PostgreSQL integration tests (RLS/isolation, GIN FTS, `pgvector` HNSW, triggers, views, `WITH RECURSIVE`, `RANK() OVER`, unique constraints):
 ```bash
 cd backend && python -m pytest tests/ -v
+cd frontend && npm test
 cd frontend && npm run build
 ```
 

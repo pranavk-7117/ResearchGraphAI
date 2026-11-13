@@ -50,7 +50,9 @@ def compute_spc(dag: Graph) -> dict[str, Any]:
         for v in dag.neighbors(u):
             edge_spc[(u, v)] = N[u] * M[v]
 
-    total_paths = sum(M[s] for s in sources) if dag.edges() else 0
+    # Exclude isolated vertices (in_degree == 0 and out_degree == 0) from inflating total_paths
+    connected_sources = [s for s in sources if len(dag.neighbors(s)) > 0]
+    total_paths = sum(M[s] for s in connected_sources) if dag.edges() else 0
 
     return {
         "N": N,

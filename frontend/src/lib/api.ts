@@ -358,6 +358,13 @@ export type CompletenessData = {
   estimated_coverage_pct: number | null;
   estimate_available: boolean;
   is_lower_bound: boolean;
+  dependence_diagnostic?: {
+    observed_overlap: number;
+    expected_overlap_under_independence: number;
+    overlap_ratio: number;
+    source_dependence_detected: boolean;
+    interpretation: string;
+  } | null;
   method: string;
   disclaimer: string;
 };

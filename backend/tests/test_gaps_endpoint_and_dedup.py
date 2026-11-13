@@ -44,6 +44,7 @@ def test_post_gaps_detect_enqueues_job():
         mock_thread.return_value.start.assert_called_once()
 
 
+@pytest.mark.live_db
 def test_research_gap_unique_constraint_prevents_duplicates():
     """Live DB check: unique constraint (project_id, corpus_version, statement_hash) rejects duplicates."""
     db = SessionLocal()

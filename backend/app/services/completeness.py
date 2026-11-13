@@ -124,8 +124,24 @@ class CompletenessService:
         chap = chapman_estimator(n1, n2, best_m)
 
         coverage_pct = None
+        dependence_diagnostic = None
         if chap["available"] and chap["estimate"]:
             coverage_pct = round(min(100.0, (total_observed / float(chap["estimate"])) * 100.0), 1)
+            expected_m = (n1 * n2) / float(chap["estimate"])
+            dep_ratio = best_m / expected_m if expected_m > 0 else 1.0
+            is_dependent = dep_ratio > 1.15
+            dependence_diagnostic = {
+                "observed_overlap": best_m,
+                "expected_overlap_under_independence": round(expected_m, 1),
+                "overlap_ratio": round(dep_ratio, 2),
+                "source_dependence_detected": is_dependent,
+                "interpretation": (
+                    "Positive source dependence detected (sources preferentially overlap on high-impact papers). "
+                    "The Chapman estimate is a strict lower bound on true literature size."
+                    if is_dependent
+                    else "Source overlap is consistent with independent capture."
+                ),
+            }
 
         if chap["available"]:
             disclaimer = (
@@ -152,6 +168,7 @@ class CompletenessService:
             "estimated_coverage_pct": coverage_pct,
             "estimate_available": chap["available"],
             "is_lower_bound": True,
+            "dependence_diagnostic": dependence_diagnostic,
             "method": "chapman_best_pair",
             "disclaimer": disclaimer,
         }

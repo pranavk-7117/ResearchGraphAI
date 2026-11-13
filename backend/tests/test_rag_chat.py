@@ -3,6 +3,7 @@ Tests for Hybrid RAG Chat Retrieval (pgvector dense + tsvector GIN FTS, RRF & Co
 no-evidence guard, project isolation, and citation formatting.
 """
 
+import pytest
 from unittest.mock import MagicMock
 from sqlalchemy import text
 
@@ -171,6 +172,39 @@ def test_no_evidence_guard_fires_on_unrelated_query():
     assert svc_rrf._hybrid_retrieve(db, project_id=1, query="threshold test") == []
 
 
+def test_fts_search_query_formatting_and_guards():
+    """Verify R1: FTS formats natural multi-term queries with OR semantics and caps at 12."""
+    svc = ChatService()
+    db = MagicMock()
+
+    # 1. Empty query or empty paper_ids returns []
+    assert svc._fts_search(db, paper_ids=[], query="some query") == []
+    assert svc._fts_search(db, paper_ids=[1, 2], query="   ") == []
+    assert svc._fts_search(db, paper_ids=[1, 2], query="a an to") == []  # all < 3 chars
+
+    # 2. 7-term query without operators: verifies execute called with " or " joined tokens
+    db.execute.return_value.fetchall.return_value = []
+    svc._fts_search(
+        db,
+        paper_ids=[10, 20],
+        query="what are primary methodologies evaluated smart insole",
+    )
+    call_args = db.execute.call_args[0]
+    sql_text = str(call_args[0])
+    params = db.execute.call_args[1] if len(db.execute.call_args) > 1 and db.execute.call_args[1] else call_args[1]
+    assert "ts_rank_cd(c.text_tsv, websearch_to_tsquery('english', :query), 1)" in sql_text
+    # Param should have joined with ' or '
+    assert " or " in params["query"]
+    assert "methodologies" in params["query"]
+    assert "insole" in params["query"]
+
+    # 3. Query with explicit quotes preserves exact expression
+    svc._fts_search(db, paper_ids=[10], query='"smart insole" -diabetes')
+    params_quoted = db.execute.call_args[0][1]
+    assert params_quoted["query"] == '"smart insole" -diabetes'
+
+
+@pytest.mark.live_db
 def test_hybrid_db_isolation_and_gin_explain():
     """
     Live PostgreSQL test:
@@ -228,6 +262,9 @@ def test_hybrid_db_isolation_and_gin_explain():
         hits_a = svc._hybrid_retrieve(db, proj_a.id, "transmon qubit millikelvin")
         assert len(hits_a) >= 1
         assert all(h["paper_id"] == p_a.id for h in hits_a)
+
+        # Force planner to prefer index scan over sequential scan on small test table
+        db.execute(text("SET LOCAL enable_seqscan = off;"))
 
         # Verify EXPLAIN uses GIN index ix_paper_chunks_text_tsv_gin
         explain_rows = db.execute(

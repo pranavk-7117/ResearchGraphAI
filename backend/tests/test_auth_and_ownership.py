@@ -21,6 +21,7 @@ def db():
     session.close()
 
 
+@pytest.mark.live_db
 def test_cross_user_access_denial(db):
     """Verify that User A cannot read or delete User B's research project."""
     # Ensure User A profile and project

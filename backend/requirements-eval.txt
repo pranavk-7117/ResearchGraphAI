@@ -1,0 +1,7 @@
+# Evaluation and offline benchmark dependencies for ResearchGraphAI
+# Keep out of production backend/requirements.txt to prevent Render 512MB RAM OOM.
+sentence-transformers>=3.0.0
+beir>=2.0.0
+datasets>=2.19.0
+scipy>=1.11.0
+scikit-learn>=1.4.0

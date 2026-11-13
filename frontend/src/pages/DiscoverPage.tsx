@@ -301,8 +301,8 @@ export function DiscoverPage({
             </div>
             {completeness.estimate_available && completeness.chapman_estimate ? (
               <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: "#2563eb" }}>
-                  ~{completeness.estimated_coverage_pct}% coverage
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#2563eb" }}>
+                  ~{completeness.estimated_coverage_pct}% estimated coverage (lower bound)
                 </div>
                 <div style={{ fontSize: 11, color: "#475569" }}>
                   Est. total (lower bound): <strong>{completeness.chapman_estimate}</strong>
@@ -315,6 +315,12 @@ export function DiscoverPage({
               </span>
             )}
           </div>
+
+          {completeness.dependence_diagnostic?.source_dependence_detected && (
+            <div style={{ marginBottom: 10, padding: "6px 10px", borderRadius: 6, background: "#fffbeb", border: "1px solid #fde68a", fontSize: 11, color: "#92400e" }}>
+              <strong>Source Dependence Diagnostic:</strong> {completeness.dependence_diagnostic.interpretation} (Observed overlap {completeness.dependence_diagnostic.observed_overlap} vs expected {completeness.dependence_diagnostic.expected_overlap_under_independence}, ratio {completeness.dependence_diagnostic.overlap_ratio}x).
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 10 }}>
             {Object.entries(completeness.venn_breakdown.singles).map(([src, count]) => (

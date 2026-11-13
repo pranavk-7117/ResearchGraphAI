@@ -24,7 +24,12 @@ from app.dm.partial_order import transitive_closure, transitive_reduction
 from app.dm.reading_path import compute_reading_path
 from app.dsa.graph import Graph as DSAGraph, has_cycle
 from app.dsa.trie import Trie
-from app.services.constants import RELATION_COUPLING, layer_for_relation
+from app.services.constants import (
+    RELATION_CITES,
+    RELATION_COUPLING,
+    RELATION_SIMILAR,
+    layer_for_relation,
+)
 from app.services.chat import ChatService
 from app.services.clustering import ClusteringService
 from app.services.compare import CompareService
@@ -399,17 +404,6 @@ def list_project_papers(
     return out
 
 
-@router.get("/projects/{project_id}/completeness")
-def get_project_completeness(
-    project_id: int,
-    user: AuthenticatedUser = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Read-only corpus completeness estimation via Inclusion-Exclusion and Chapman capture-recapture."""
-    project = verify_project_ownership(project_id, user, db)
-    return CompletenessService().compute(db, project.id)
-
-
 @router.get("/projects/{project_id}/graph", response_model=schemas.GraphOut)
 def get_project_graph(
     project_id: int,
@@ -510,7 +504,7 @@ def get_project_graph(
                 layer=layer_for_relation(rel.relation_type),
                 basis=rel.basis,
                 score=rel.score,
-                directed=bool(getattr(rel, "directed", rel.relation_type == "cites")),
+                directed=(rel.relation_type == RELATION_CITES),
                 shared_references=shared_refs,
             )
         )
@@ -521,6 +515,54 @@ def get_project_graph(
         total_nodes=len(nodes),
         total_edges=len(edges),
     )
+
+
+@router.get("/projects/{project_id}/backbone")
+def get_project_mst_backbone(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Compute Maximum Spanning Forest backbone of the similarity/relation graph using hand-built Kruskal MST (DS-1).
+    Time Complexity: O(E log E), Space Complexity: O(V + E).
+    """
+    project = verify_project_ownership(project_id, user, db)
+    from app.dsa.graph import Graph as DSAGraph
+    from app.dsa.mst import kruskal_mst
+
+    pids = [
+        r[0]
+        for r in (
+            db.query(models.ProjectPaper.paper_id)
+            .filter(models.ProjectPaper.project_id == project.id)
+            .all()
+        )
+    ]
+    graph = DSAGraph(directed=False)
+    for pid in pids:
+        graph.add_node(pid)
+
+    relations = (
+        db.query(models.PaperRelation)
+        .filter(models.PaperRelation.project_id == project.id)
+        .all()
+    )
+    for r in relations:
+        graph.add_edge(r.source_id, r.target_id, weight=float(r.score or 0.0))
+
+    mst_edges = kruskal_mst(graph, maximum=True)
+    return {
+        "project_id": project.id,
+        "nodes": pids,
+        "backbone_edges": [
+            {"source": u, "target": v, "weight": round(w, 4)}
+            for u, v, w in mst_edges
+        ],
+        "edge_count": len(mst_edges),
+        "total_weight": round(sum(w for _, _, w in mst_edges), 4),
+        "is_tree": len(mst_edges) == max(0, len(pids) - 1) if pids else True,
+    }
 
 
 @router.get("/projects/{project_id}/autocomplete")

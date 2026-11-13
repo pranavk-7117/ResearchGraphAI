@@ -43,15 +43,15 @@ cd backend; python ../evaluation/evaluate.py
 
 Evaluated across `20` OpenAlex abstracts (`4` per topic across `5` domains), `30` in-domain questions (`6` per topic), and `10` completely off-topic questions with `min_dense_similarity >= 0.22` threshold guard and strict T3 `post_validate_citation` verification (normalized exact substring or ordered token-sequence LCS >= 0.9):
 
-| Metric | Measured Result |
-|---|---:|
-| Domain Questions Evaluated | 30 |
-| Total Quoted Claims Extracted | 65 |
-| Verified Against Retrieved Chunks | 59 |
-| **Quote Verification Precision** | **0.9077 (90.8%)** |
-| **Answers With >= 1 Verified Quote** | **1.0000 (30 / 30)** |
-| Off-Topic Questions Evaluated | 10 |
-| **No-Evidence / Off-Topic Refusal Rate** | **0.9000 (9 / 10)** |
+| Metric | Measured Result | 95% Confidence Interval |
+|---|---:|---:|
+| Domain Questions Evaluated | 30 | — |
+| Total Quoted Claims Extracted | 65 | — |
+| Verified Against Retrieved Chunks | 59 | — |
+| **Quote Verification Precision** | **0.9077 (90.8%)** | `[0.8126, 0.9575]` (Wilson score) |
+| **Answers With >= 1 Verified Quote** | **1.0000 (30 / 30)** | `[0.8865, 1.0000]` (Wilson score) |
+| Off-Topic Questions Evaluated | 10 | — |
+| **No-Evidence / Off-Topic Refusal Rate** | **0.9000 (9 / 10)** | `[0.5958, 0.9821]` (Wilson score) |
 
 ---
 
@@ -74,4 +74,5 @@ Previously, `evaluate.py` measured `mean_relevance` using `all-MiniLM-L6-v2` cos
 Pre-2023 (`T = 2023`) bipartite Method x Task matrices checked against `2024–2026` (`H = 3`) OpenAlex literature (`cosine >= 0.45`):
 
 - **Overall Matrix Void Precision@3**: **0.643** (`9/14`) vs **Random Empty Cell Baseline**: **0.357** (`5/14`).
+- **Statistical Significance**: Two-sided Fisher's exact test **p = 0.257** (directional advantage, but **not statistically significant** at alpha = 0.05 due to small sample size N=14 per condition).
 - Full per-topic breakdown and caveats are in [`evaluation/gap_holdout_summary.md`](../evaluation/gap_holdout_summary.md) and [`evaluation/results_v2.json`](../evaluation/results_v2.json).

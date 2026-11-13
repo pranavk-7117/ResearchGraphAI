@@ -82,3 +82,27 @@ def test_lincoln_petersen_and_chapman_formula():
     chap = chapman_estimator(100, 80, 20)
     expected = ((101 * 81) / 21.0) - 1.0
     assert abs(chap["estimate"] - round(expected, 1)) < 1e-6
+
+
+def test_completeness_dependence_diagnostic():
+    """Verify R6: Dependence diagnostic flags positive source correlation."""
+    rows = []
+    # 20 papers in both OpenAlex and S2 (high overlap m=20), 5 papers in OpenAlex only, 5 in S2 only
+    for idx in range(1, 21):
+        pp = MagicMock(paper_id=idx, sources=["openalex", "semantic_scholar"])
+        rows.append((pp, MagicMock(id=idx, source_name="openalex")))
+    for idx in range(21, 26):
+        pp = MagicMock(paper_id=idx, sources=["openalex"])
+        rows.append((pp, MagicMock(id=idx, source_name="openalex")))
+    for idx in range(26, 31):
+        pp = MagicMock(paper_id=idx, sources=["semantic_scholar"])
+        rows.append((pp, MagicMock(id=idx, source_name="semantic_scholar")))
+
+    db = MagicMock()
+    db.query.return_value.join.return_value.filter.return_value.all.return_value = rows
+
+    res = CompletenessService().compute(db, project_id=1)
+    assert res["estimate_available"] is True
+    assert res["dependence_diagnostic"] is not None
+    assert "source_dependence_detected" in res["dependence_diagnostic"]
+    assert res["is_lower_bound"] is True
