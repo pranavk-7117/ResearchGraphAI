@@ -813,9 +813,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                   {(() => {
                                     const list = (p.limitations_and_gaps && p.limitations_and_gaps.length > 0)
                                       ? p.limitations_and_gaps
-                                      : (p.gaps_solved && p.gaps_solved.length > 0)
-                                        ? p.gaps_solved
-                                        : [];
+                                      : [];
                                     if (list.length > 0) {
                                       return list.map((g, gIdx) => {
                                         const text = typeof g === "string" ? g : (g.value || JSON.stringify(g));

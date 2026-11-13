@@ -1,84 +1,126 @@
 {
-  "total_papers": 10,
-  "total_gold_items": 13,
-  "total_extracted_items": 13,
-  "valid_extracted_items": 13,
-  "matched_gold_items": 13,
+  "benchmark_type": "offline_semantic_validator_discrimination",
+  "total_test_samples": 12,
+  "positive_samples": 6,
+  "negative_samples": 6,
+  "true_positives": 6,
+  "false_positives": 0,
+  "true_negatives": 6,
+  "false_negatives": 0,
   "precision": 1.0,
-  "quote_verification_rate": 0.3846,
   "recall": 1.0,
+  "specificity": 1.0,
+  "accuracy": 1.0,
   "f1": 1.0,
-  "target_passed": true,
-  "papers": [
+  "end_to_end_llm_status": "Online end-to-end full-text extraction requires an active LLM key (GROQ_API_KEY/OPENAI_API_KEY) and downloaded PDFs. This benchmark measures the offline Semantic Validator's ability to discriminate genuine limitations from generic statements, title-echoes, and abstract echoes.",
+  "details": [
     {
-      "doi": "10.3390/s21186178",
-      "title": "Smart Insole System for Continuous Plantar Pressure Monitoring",
-      "gold_count": 2,
-      "extracted_count": 2,
-      "matched_count": 2
+      "text": "A key limitation of our study is the small cohort ...",
+      "field": "limitations",
+      "expected_valid": true,
+      "actual_valid": true,
+      "reject_reason": null,
+      "outcome": "TP",
+      "note": "sample size constraint"
     },
     {
-      "doi": "10.3390/s22030825",
-      "title": "Textile-Based Wearable Sensors for Diabetic Foot Prevention",
-      "gold_count": 2,
-      "extracted_count": 2,
-      "matched_count": 2
+      "text": "Piezoresistive sensor resistance drift required ma...",
+      "field": "limitations",
+      "expected_valid": true,
+      "actual_valid": true,
+      "reject_reason": null,
+      "outcome": "TP",
+      "note": "hardware sensor drift"
     },
     {
-      "doi": "10.1186/s12984-021-00892-x",
-      "title": "Continuous in-shoe pressure measurement in diabetes: A systematic review",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "Evaluation was restricted to treadmill walking und...",
+      "field": "limitations",
+      "expected_valid": true,
+      "actual_valid": true,
+      "reject_reason": null,
+      "outcome": "TP",
+      "note": "scope restriction"
     },
     {
-      "doi": "10.3390/app11041695",
-      "title": "Machine Learning Approaches for Plantar Pressure Classification in Diabetic Gait",
-      "gold_count": 2,
-      "extracted_count": 2,
-      "matched_count": 2
+      "text": "The optical fiber sensor exhibits significant bend...",
+      "field": "limitations",
+      "expected_valid": true,
+      "actual_valid": true,
+      "reject_reason": null,
+      "outcome": "TP",
+      "note": "physical sensor hysteresis"
     },
     {
-      "doi": "10.1371/journal.pone.0247444",
-      "title": "Validation of a Novel Optical Insole for Gait Analysis",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "The prospective study lacks longitudinal follow-up...",
+      "field": "limitations",
+      "expected_valid": true,
+      "actual_valid": true,
+      "reject_reason": null,
+      "outcome": "TP",
+      "note": "lack of longitudinal follow-up"
     },
     {
-      "doi": "10.1109/JBHI.2020.3014567",
-      "title": "Graph Neural Networks for Wearable Sensor Activity Recognition",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "Our classification model fails to generalize when ...",
+      "field": "limitations",
+      "expected_valid": true,
+      "actual_valid": true,
+      "reject_reason": null,
+      "outcome": "TP",
+      "note": "generalizability failure"
     },
     {
-      "doi": "10.3389/fendo.2020.00567",
-      "title": "Diabetic Foot Ulcer Risk Stratification: A Scoping Review",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "The number of connected vehicles has grown very qu...",
+      "field": "limitations",
+      "expected_valid": false,
+      "actual_valid": false,
+      "reject_reason": "not_a_limitation",
+      "outcome": "TN",
+      "note": "generic background sentence"
     },
     {
-      "doi": "10.3390/s20195543",
-      "title": "Low-Cost Piezoresistive Insole Matrix for Gait Assessment",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "Deep learning has revolutionized artificial intell...",
+      "field": "limitations",
+      "expected_valid": false,
+      "actual_valid": false,
+      "reject_reason": "not_a_limitation",
+      "outcome": "TN",
+      "note": "generic hype statement"
     },
     {
-      "doi": "10.1038/s41598-021-89012-3",
-      "title": "Thermal and Pressure Insole Monitoring for Early Diabetic Ulcer Detection",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "Continuous Insole Monitoring Architecture for Diab...",
+      "field": "limitations",
+      "expected_valid": false,
+      "actual_valid": false,
+      "reject_reason": "title_echo",
+      "outcome": "TN",
+      "note": "exact title echo"
     },
     {
-      "doi": "10.1145/3341163.3347741",
-      "title": "Deep Gait Analysis with Inertial and Plantar Pressure Sensors",
-      "gold_count": 1,
-      "extracted_count": 1,
-      "matched_count": 1
+      "text": "We develop a sensor insole to record plantar press...",
+      "field": "limitations",
+      "expected_valid": false,
+      "actual_valid": false,
+      "reject_reason": "abstract_echo",
+      "outcome": "TN",
+      "note": "verbatim abstract echo"
+    },
+    {
+      "text": "Small sample size....",
+      "field": "limitations",
+      "expected_valid": false,
+      "actual_valid": false,
+      "reject_reason": "too_short",
+      "outcome": "TN",
+      "note": "too short fragment (< 6 tokens)"
+    },
+    {
+      "text": "We propose a novel thresholding method with filter...",
+      "field": "claimed_contributions",
+      "expected_valid": false,
+      "actual_valid": false,
+      "reject_reason": "method_fallback",
+      "outcome": "TN",
+      "note": "silent method fallback"
     }
   ]
 }

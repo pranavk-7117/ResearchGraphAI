@@ -270,7 +270,7 @@
   - **E6**: Added strict semantic validation: rejecting title-echo (>0.6 token overlap), abstract-echo on full-text, fragments < 6 tokens for narrative clauses, and disallowing silent fallback from contribution to method.
   - **E7**: Added automated paper classification (`survey|empirical|system|theory|unknown`), extracting and rendering open challenges for surveys.
   - **E8**: Added retry logic with backoff, `POST /api/projects/{id}/facts/reextract`, `GET /api/projects/{id}/facts/coverage`, and toolbar chip with breakdown popover and "Re-extract missing" button.
-  - **E9**: Created `evaluation/extraction_eval.py` and `evaluation/gold_limitations_sample.csv` (10 real open-access papers). Achieved **100% precision and 100% recall** on gold benchmarks; documented in `docs/EVALUATION.md`.
+  - **E9**: Created non-circular `evaluation/extraction_eval.py` benchmarking the offline Semantic Validator & Limitation Discriminator against genuine peer-reviewed limitations vs adversarial distractors (generic sentences, title echoes, abstract echoes, short fragments). Documented that live full-text extraction requires runtime LLM inference (`GROQ_API_KEY`/`OPENAI_API_KEY`) and removed all circular PASS claims. Full methodology in `docs/EVALUATION.md`.
 - **Tests**: Added `tests/test_facts_extraction.py` (5 passed); `tests/test_pdf_and_storage.py` (5 passed); full backend suite: **73 passed, 7 skipped, 0 failed in 6.00s**.
 - **Acceptance**: Evolution timeline displays honest states, multi-item limitations, cue ranking works, all extraction tests pass. **PASS**.
 

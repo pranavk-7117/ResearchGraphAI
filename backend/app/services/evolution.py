@@ -567,7 +567,6 @@ class EvolutionService:
                 "topic_tag": paper_cluster_map.get(p.id),
                 "key_contribution": contrib_val or method_val,
                 "limitations_and_gaps": gap_items,
-                "gaps_solved": gap_items,
                 "extraction_status": status,
                 "source_scope": getattr(f, "source_scope", "abstract_only") if f else "abstract_only",
                 "paper_kind": getattr(f, "paper_kind", "unknown") if f else "unknown",

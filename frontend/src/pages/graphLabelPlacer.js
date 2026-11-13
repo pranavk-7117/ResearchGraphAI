@@ -184,3 +184,149 @@ export function placeLabels(options) {
 
   return placed;
 }
+
+export function getLinkArrowLength(link) {
+  return link.relation_type === "cites" || link.layer === "citation" ? 6 : 0;
+}
+
+export function computeTop8NodeIds(nodes) {
+  return new Set(
+    [...nodes]
+      .sort((a, b) => (b.citation_count || 0) - (a.citation_count || 0))
+      .slice(0, 8)
+      .map((n) => n.id)
+  );
+}
+
+export function computeEgoNeighborIds(selectedId, links) {
+  if (!selectedId) return new Set();
+  const ids = new Set();
+  links.forEach((l) => {
+    const s = typeof l.source === "object" ? l.source.id : l.source;
+    const t = typeof l.target === "object" ? l.target.id : l.target;
+    if (s === selectedId) ids.add(t);
+    if (t === selectedId) ids.add(s);
+  });
+  return ids;
+}
+
+export function isPageRankUninformative(nodes) {
+  if (nodes.length < 2) return false;
+  const prs = nodes.map((n) => n.pagerank || 0);
+  const minPr = Math.min(...prs);
+  const maxPr = Math.max(...prs);
+  return maxPr - minPr < 1e-4;
+}
+
+export function calculateMinEdgeWeightCutoff(nodes, edges, maxRatio = 3) {
+  if (nodes.length === 0 || edges.length <= maxRatio * nodes.length) {
+    return 0.0;
+  }
+  const simEdges = edges
+    .filter((e) => {
+      const l = e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic");
+      return l === "semantic";
+    })
+    .map((e) => e.score || 0.0)
+    .sort((a, b) => b - a);
+  const maxNonCitation = Math.max(0, maxRatio * nodes.length - edges.filter((e) => e.relation_type === "cites").length);
+  if (simEdges.length > maxNonCitation && maxNonCitation > 0) {
+    const threshold = simEdges[maxNonCitation - 1];
+    return Math.min(0.85, Math.max(0.35, Math.round(threshold * 20) / 20));
+  }
+  return 0.50;
+}
+
+export function getNodeVal(node, nodeSizeMode = "citations") {
+  if (nodeSizeMode === "citations") {
+    return Math.max(5, Math.min(16, 5 + Math.log2((node.citation_count || 0) + 1) * 1.6));
+  } else if (nodeSizeMode === "pagerank") {
+    return Math.max(5, Math.min(16, 5 + (node.pagerank || 0) * 80));
+  }
+  return 7;
+}
+
+export function pickDefaultLayout(nodeCount) {
+  return nodeCount <= 60 ? "radial" : "force";
+}
+
+export function computeBeeswarmY(idxInGroup, baseCenterY, r) {
+  if (idxInGroup === 0) return baseCenterY;
+  const sign = idxInGroup % 2 === 1 ? 1 : -1;
+  const step = Math.ceil(idxInGroup / 2);
+  return baseCenterY + sign * step * (2 * r + 5);
+}
+
+export function filterGraphData(options) {
+  const {
+    baseNodes,
+    edges,
+    selectedClusterId = null,
+    searchQuery = "",
+    enabledLayers = { citation: true, coupling: true, semantic: true },
+    minEdgeWeight = 0.0,
+    egoHops = "all",
+    selectedNodeId = null,
+  } = options;
+
+  let nodes = baseNodes;
+  if (selectedClusterId !== null) {
+    nodes = nodes.filter((n) => n.cluster_id === selectedClusterId);
+  }
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase();
+    nodes = nodes.filter(
+      (n) => (n.title || "").toLowerCase().includes(q) || (n.authors_str || "").toLowerCase().includes(q)
+    );
+  }
+
+  const activeEdges = edges.filter((e) => {
+    const layer = e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic");
+    if (layer === "citation" && !enabledLayers.citation) return false;
+    if (layer === "coupling" && !enabledLayers.coupling) return false;
+    if (layer === "semantic" && !enabledLayers.semantic) return false;
+    if (layer === "semantic" && (e.score || 0) < minEdgeWeight) return false;
+    return true;
+  });
+
+  let nodeIds = new Set(nodes.map((n) => n.id));
+  if (egoHops !== "all" && selectedNodeId && nodeIds.has(selectedNodeId)) {
+    const maxHops = egoHops === "1" ? 1 : 2;
+    const egoIds = new Set([selectedNodeId]);
+    let frontier = new Set([selectedNodeId]);
+    for (let h = 0; h < maxHops; h++) {
+      const nextFrontier = new Set();
+      activeEdges.forEach((e) => {
+        const s = typeof e.source === "object" ? e.source.id : e.source;
+        const t = typeof e.target === "object" ? e.target.id : e.target;
+        if (frontier.has(s) && !egoIds.has(t) && nodeIds.has(t)) {
+          egoIds.add(t);
+          nextFrontier.add(t);
+        }
+        if (frontier.has(t) && !egoIds.has(s) && nodeIds.has(s)) {
+          egoIds.add(s);
+          nextFrontier.add(s);
+        }
+      });
+      frontier = nextFrontier;
+      if (frontier.size === 0) break;
+    }
+    nodes = nodes.filter((n) => egoIds.has(n.id));
+    nodeIds = egoIds;
+  }
+
+  const finalEdges = activeEdges.filter((e) => {
+    const s = typeof e.source === "object" ? e.source.id : e.source;
+    const t = typeof e.target === "object" ? e.target.id : e.target;
+    return nodeIds.has(s) && nodeIds.has(t);
+  });
+
+  return {
+    nodes,
+    edges: finalEdges.map((e) => ({
+      ...e,
+      source: typeof e.source === "object" ? e.source.id : e.source,
+      target: typeof e.target === "object" ? e.target.id : e.target,
+    })),
+  };
+}

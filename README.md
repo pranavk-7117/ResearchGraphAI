@@ -83,7 +83,7 @@ cd backend && python ../evaluation/evaluate_retrieval.py     # BEIR SciFact (n=3
 cd backend && python ../evaluation/evaluate_attribution.py   # 30 domain + 10 off-topic Qs: 90.8% quote precision, 90% refusal
 cd backend && python scripts/gap_holdout.py --k 3 --limit 25 # 5-topic pre-2023 holdout: Precision@3=0.643 vs 0.357 random
 cd backend && python ../evaluation/evaluate.py               # Non-circular external Cross-Encoder discovery benchmark -> results_v2.json
-python evaluation/extraction_eval.py                         # 10 OA gold sample papers: Precision=100.0%, Recall=100.0%, F1=1.0000
+python evaluation/extraction_eval.py                         # Semantic validator discriminator benchmark (genuine limitations vs adversarial distractors)
 ```
 
 ---

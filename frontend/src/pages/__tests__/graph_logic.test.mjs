@@ -1,79 +1,21 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
-import { placeLabels, boxesOverlap } from "../graphLabelPlacer.js";
+import {
+  placeLabels,
+  boxesOverlap,
+  circleIntersectsBox,
+  getLinkArrowLength,
+  computeTop8NodeIds,
+  computeEgoNeighborIds,
+  isPageRankUninformative,
+  calculateMinEdgeWeightCutoff,
+  getNodeVal,
+  pickDefaultLayout,
+  computeBeeswarmY,
+  filterGraphData,
+} from "../graphLabelPlacer.js";
 
-// Logic helpers matching GraphPage.tsx implementations
-
-function getLinkArrowLength(link) {
-  return link.relation_type === "cites" || link.layer === "citation" ? 6 : 0;
-}
-
-function computeTop8NodeIds(nodes) {
-  return new Set(
-    [...nodes]
-      .sort((a, b) => (b.citation_count || 0) - (a.citation_count || 0))
-      .slice(0, 8)
-      .map((n) => n.id)
-  );
-}
-
-function computeEgoNeighborIds(selectedId, links) {
-  if (!selectedId) return new Set();
-  const ids = new Set();
-  links.forEach((l) => {
-    const s = typeof l.source === "object" ? l.source.id : l.source;
-    const t = typeof l.target === "object" ? l.target.id : l.target;
-    if (s === selectedId) ids.add(t);
-    if (t === selectedId) ids.add(s);
-  });
-  return ids;
-}
-
-function isPageRankUninformative(nodes) {
-  if (nodes.length < 2) return false;
-  const prs = nodes.map((n) => n.pagerank || 0);
-  const minPr = Math.min(...prs);
-  const maxPr = Math.max(...prs);
-  return maxPr - minPr < 1e-4;
-}
-
-function calculateMinEdgeWeightCutoff(nodes, edges, maxRatio = 3) {
-  if (nodes.length === 0 || edges.length <= maxRatio * nodes.length) {
-    return 0.0;
-  }
-  const simEdges = edges
-    .filter((e) => e.relation_type !== "cites")
-    .map((e) => e.score || 0.0)
-    .sort((a, b) => b - a);
-  const maxNonCitation = Math.max(0, maxRatio * nodes.length - edges.filter((e) => e.relation_type === "cites").length);
-  if (simEdges.length > maxNonCitation && maxNonCitation > 0) {
-    const threshold = simEdges[maxNonCitation - 1];
-    return Math.min(0.85, Math.max(0.35, Math.round(threshold * 20) / 20));
-  }
-  return 0.50;
-}
-
-function getNodeVal(node, nodeSizeMode = "citations") {
-  if (nodeSizeMode === "citations") {
-    return Math.max(5, Math.min(16, 5 + Math.log2((node.citation_count || 0) + 1) * 1.6));
-  } else if (nodeSizeMode === "pagerank") {
-    return Math.max(5, Math.min(16, 5 + (node.pagerank || 0) * 80));
-  }
-  return 7;
-}
-
-function pickDefaultLayout(nodeCount) {
-  return nodeCount <= 60 ? "radial" : "force";
-}
-
-function computeBeeswarmY(idxInGroup, baseCenterY, r) {
-  if (idxInGroup === 0) return baseCenterY;
-  const sign = idxInGroup % 2 === 1 ? 1 : -1;
-  const step = Math.ceil(idxInGroup / 2);
-  return baseCenterY + sign * step * (2 * r + 5);
-}
-
-describe("Knowledge Graph (G1-G8) Logic Tests", () => {
+describe("Knowledge Graph (G1-G8, K1-K6) Logic Tests — Live Helper Imports", () => {
   test("G3: Arrowhead length is strictly 6 for citation edges and 0 for coupling/similarity", () => {
     assert.strictEqual(getLinkArrowLength({ relation_type: "cites", layer: "citation" }), 6);
     assert.strictEqual(getLinkArrowLength({ relation_type: "coupling", layer: "coupling" }), 0);
@@ -118,80 +60,90 @@ describe("Knowledge Graph (G1-G8) Logic Tests", () => {
 
     const diverseNodes = [
       { id: 1, pagerank: 0.55 },
-      { id: 2, pagerank: 0.15 },
-      { id: 3, pagerank: 0.05 },
+      { id: 2, pagerank: 0.20 },
+      { id: 3, pagerank: 0.15 },
+      { id: 4, pagerank: 0.10 },
     ];
     assert.strictEqual(isPageRankUninformative(diverseNodes), false);
   });
 
   test("G1: Pruning threshold limits dense edges to <= 3 * nodes", () => {
     const nodes = Array.from({ length: 10 }, (_, i) => ({ id: i + 1 }));
-    // 50 similarity edges with descending scores from 0.99 down to 0.50
+    // 50 semantic edges with scores from 0.50 to 0.99
     const edges = Array.from({ length: 50 }, (_, i) => ({
       source: (i % 10) + 1,
       target: ((i + 1) % 10) + 1,
       relation_type: "similar",
-      score: 1.0 - i * 0.01,
+      layer: "semantic",
+      score: 0.5 + (i / 100),
     }));
+
     const cutoff = calculateMinEdgeWeightCutoff(nodes, edges, 3);
-    assert.ok(cutoff > 0.0);
-    // Filtered edges with score >= cutoff should be approximately <= 30
-    const retained = edges.filter((e) => e.score >= cutoff);
-    assert.ok(retained.length <= 35, `Retained count ${retained.length} should be near 30`);
+    assert.ok(cutoff >= 0.5, "Cutoff should prune excess edges");
+
+    const surviving = edges.filter((e) => e.score >= cutoff);
+    assert.ok(surviving.length <= 3 * nodes.length + 5, `Surviving edges (${surviving.length}) should be bounded`);
   });
 
   test("K3: placeLabels ensures selected node is always placed even in crowded clusters", () => {
-    const nodes = [
-      { id: 1, x: 100, y: 100, title: "Diabetic Foot Ulcer Sensor", radius: 10 },
-      { id: 2, x: 102, y: 105, title: "Smart Insole Pressure", radius: 10 },
-    ];
+    const crowdedNodes = Array.from({ length: 15 }, (_, i) => ({
+      id: i + 1,
+      x: 100 + (i % 3) * 10,
+      y: 100 + Math.floor(i / 3) * 10,
+      title: `Very Long Paper Title ${i + 1}`,
+      radius: 12,
+    }));
+
+    const selectedId = 7;
     const placed = placeLabels({
-      nodes,
-      candidateIds: [2],
-      selectedId: 1,
-      maxLabels: 8,
+      nodes: crowdedNodes,
+      candidateIds: crowdedNodes.map((n) => n.id),
+      selectedId,
+      maxLabels: 5,
     });
-    assert.ok(placed.has(1), "Selected node id=1 must be placed");
+
+    assert.ok(placed.has(selectedId), "Selected node must be placed even in dense clusters");
   });
 
   test("K3: placeLabels avoids overlapping bounding boxes among non-mandatory labels", () => {
-    // 3 nodes very close to each other
     const nodes = [
-      { id: 10, x: 200, y: 200, title: "First Dense Paper Title", radius: 10 },
-      { id: 11, x: 205, y: 204, title: "Second Dense Paper Title", radius: 10 },
-      { id: 12, x: 203, y: 202, title: "Third Dense Paper Title", radius: 10 },
-      { id: 13, x: 500, y: 500, title: "Isolated Distant Paper", radius: 10 },
+      { id: 1, x: 100, y: 100, title: "Paper One Title", radius: 10 },
+      { id: 2, x: 100, y: 100, title: "Paper Two Above Position", radius: 10 },
+      { id: 3, x: 100, y: 100, title: "Paper Three Third Candidate Colliding", radius: 10 },
+      { id: 4, x: 400, y: 400, title: "Paper Four Distant", radius: 10 },
     ];
+
     const placed = placeLabels({
       nodes,
-      candidateIds: [10, 11, 12, 13],
-      maxLabels: 8,
+      candidateIds: [1, 2, 3, 4],
+      maxLabels: 5,
     });
-    const placedArr = Array.from(placed.values());
-    for (let i = 0; i < placedArr.length; i++) {
-      for (let j = i + 1; j < placedArr.length; j++) {
-        const overlap = boxesOverlap(placedArr[i].bbox, placedArr[j].bbox);
-        assert.strictEqual(
-          overlap,
-          false,
-          `Boxes for nodes ${placedArr[i].nodeId} and ${placedArr[j].nodeId} should not overlap`
-        );
+
+    assert.ok(placed.has(1), "First candidate placed below");
+    assert.ok(placed.has(2), "Second candidate placed above");
+    assert.ok(!placed.has(3), "Third colliding candidate must be rejected because both below and above are occupied");
+    assert.ok(placed.has(4), "Distant non-colliding candidate placed");
+
+    const placedList = Array.from(placed.values());
+    for (let i = 0; i < placedList.length; i++) {
+      for (let j = i + 1; j < placedList.length; j++) {
+        assert.ok(!boxesOverlap(placedList[i].bbox, placedList[j].bbox), "No two placed bounding boxes may overlap");
       }
     }
   });
 
   test("K3: placeLabels caps total placed labels at maxLabels", () => {
-    const nodes = Array.from({ length: 20 }, (_, i) => ({
+    const nodes = Array.from({ length: 25 }, (_, i) => ({
       id: i + 1,
-      x: i * 150,
-      y: (i % 2) * 150,
-      title: `Paper Number ${i + 1} Long Title`,
+      x: (i % 5) * 150,
+      y: Math.floor(i / 5) * 100,
+      title: `Spaced Paper Title ${i + 1}`,
       radius: 8,
     }));
-    const candidateIds = nodes.map((n) => n.id);
+
     const placed = placeLabels({
       nodes,
-      candidateIds,
+      candidateIds: nodes.map((n) => n.id),
       maxLabels: 8,
     });
     assert.ok(placed.size <= 8, `Placed size ${placed.size} should be <= 8`);
@@ -223,23 +175,42 @@ describe("Knowledge Graph (G1-G8) Logic Tests", () => {
     assert.ok(Math.abs(y3 - y1) >= 2 * r + 4, "Delta y between 1 and 3 on same side must be >= 2r+4");
   });
 
-  test("K1: Node identity is preserved and not reconstructed on node click", () => {
-    const rawNodes = [
-      { id: 1, title: "Paper 1", fx: 10, fy: 20 },
-      { id: 2, title: "Paper 2", fx: 30, fy: 40 },
-    ];
-    // Simulating baseNodes memoization
-    const baseNodes = rawNodes.map((n) => ({ ...n, name: n.title }));
+  test("K1: filterGraphData preserves exact node object references when selectedNode changes", () => {
+    const nodeA = { id: 1, title: "Paper A", cluster_id: 1, citation_count: 5, fx: 100, fy: 200 };
+    const nodeB = { id: 2, title: "Paper B", cluster_id: 1, citation_count: 10, fx: 300, fy: 400 };
+    const baseNodes = [nodeA, nodeB];
+    const edges = [{ source: 1, target: 2, relation_type: "cites", score: 1.0 }];
 
-    // Simulating filteredData when selectedNode changes
-    let selectedNode = baseNodes[0];
-    const filteredNodesFirst = baseNodes; // Reused directly
+    // 1. Initial selection: nodeA
+    const resA = filterGraphData({
+      baseNodes,
+      edges,
+      selectedClusterId: null,
+      searchQuery: "",
+      enabledLayers: { citation: true, coupling: true, semantic: true },
+      minEdgeWeight: 0.0,
+      egoHops: "all",
+      selectedNodeId: 1,
+    });
 
-    selectedNode = baseNodes[1];
-    const filteredNodesSecond = baseNodes; // Reused directly
+    // 2. Click / select nodeB
+    const resB = filterGraphData({
+      baseNodes,
+      edges,
+      selectedClusterId: null,
+      searchQuery: "",
+      enabledLayers: { citation: true, coupling: true, semantic: true },
+      minEdgeWeight: 0.0,
+      egoHops: "all",
+      selectedNodeId: 2,
+    });
 
-    assert.strictEqual(filteredNodesFirst, filteredNodesSecond, "Node arrays reference should be identical");
-    assert.strictEqual(filteredNodesFirst[0], filteredNodesSecond[0], "Node object references must be preserved");
-    assert.strictEqual(filteredNodesSecond[0].fx, 10, "fx coordinate must persist");
+    // Node object references MUST be strictly identical (preserving simulation position & pinned fx/fy)
+    assert.strictEqual(resA.nodes[0], baseNodes[0], "Node 0 must retain exact object reference");
+    assert.strictEqual(resB.nodes[0], baseNodes[0], "Node 0 must retain exact object reference after selecting node B");
+    assert.strictEqual(resA.nodes[0], resB.nodes[0], "Nodes across selections must have identical object identity");
+    assert.strictEqual(resA.nodes[1], resB.nodes[1], "Node 1 must have identical object identity");
+    assert.strictEqual(resB.nodes[0].fx, 100, "Pinned fx coordinate must be preserved");
+    assert.strictEqual(resB.nodes[0].fy, 200, "Pinned fy coordinate must be preserved");
   });
 });

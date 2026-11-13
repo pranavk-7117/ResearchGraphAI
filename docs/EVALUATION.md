@@ -82,19 +82,23 @@ Pre-2023 (`T = 2023`) bipartite Method x Task matrices checked against `2024–2
 
 ---
 
-## 6. Scientific Fact & Limitation Extraction Benchmark (`extraction_eval.py`)
+## 6. Semantic Validator & Limitation Discriminator Benchmark (`extraction_eval.py`)
 
-Evaluated on `evaluation/gold_limitations_sample.csv` containing `10` real open-access papers across biomedical sensing, diabetic foot ulcer monitoring, and machine learning architectures, with hand-annotated true limitations and future work items:
+Evaluates the offline semantic validation engine (`validate_extracted_item`) across a balanced test suite of genuine peer-reviewed scientific limitation statements versus adversarial distractors (generic background sentences, title echoes, abstract echoes, short fragments, and method fallbacks):
 
-| Metric | Measured Result | Threshold / Target | Status |
-|---|---:|---:|:---:|
-| Papers Evaluated | 10 | 10 | PASS |
-| Gold Limitations Annotated | 13 | — | — |
-| Extracted Limitations & Challenges | 13 | — | — |
-| **Extraction Precision** | **1.0000 (100.0%)** | $\ge 0.85$ | **PASS** |
-| Non-Echo Rate (Overlap $< 0.6$ with Title) | 1.0000 (100.0%) | $\ge 0.95$ | **PASS** |
-| Minimum Clause Length Pass ($\ge 6$ tokens) | 1.0000 (100.0%) | $1.00$ | **PASS** |
-| **Extraction Recall (against Gold)** | **1.0000 (100.0%)** | $\ge 0.60$ | **PASS** |
-| **F1 Score** | **1.0000** | — | **PASS** |
+| Metric | Measured Result | Interpretation / Notes |
+|---|---:|---|
+| Total Benchmark Samples | 12 | 6 genuine limitations + 6 adversarial distractors |
+| Genuine Limitations Correctly Accepted (TP) | 6 / 6 | Correctly identifies scope restrictions, drift, and lack of follow-up |
+| Distractors Correctly Rejected (TN) | 6 / 6 | Rejects generic sentences, title-echoes, abstract-echoes, and short fragments |
+| False Positives (FP) | 0 | Zero distractors slipped past the semantic validator |
+| False Negatives (FN) | 0 | Zero genuine limitations rejected |
+| **Validator Precision** | **1.0000 (100.0%)** | $TP / (TP + FP)$ |
+| **Validator Specificity (TNR)** | **1.0000 (100.0%)** | $TN / (TN + FP)$ |
+| **Validator Recall (TPR)** | **1.0000 (100.0%)** | $TP / (TP + FN)$ |
+| **Overall Accuracy** | **1.0000 (100.0%)** | $(TP + TN) / \text{Total}$ |
 
-Target precision ($\ge 85\%$) and recall ($\ge 60\%$) criteria are successfully met by the targeted cue lexicon scoring, line-anchored heading detection, and multi-item list representation. Full breakdown is in [`evaluation/extraction_results.json`](../evaluation/extraction_results.json).
+### Scientific Honesty Note on Full-Text Extraction
+- **Offline Validator vs Live Extraction**: This benchmark measures the deterministic **Semantic Validator**'s ability to discriminate genuine limitation phrasing from generic filler and echoes.
+- **Runtime LLM Requirement**: End-to-end full-text extraction requires live LLM runtime inference (`GROQ_API_KEY` or `OPENAI_API_KEY`) and accessible open-access PDF full texts. We do **not** claim a static 100% extraction pass on arbitrary unindexed full-text PDFs.
+- Full sample breakdown and rejection reasons are recorded in [`evaluation/extraction_results.json`](../evaluation/extraction_results.json).

@@ -12,6 +12,7 @@ from typing import Any
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Computed,
     DateTime,
     Float,
@@ -281,6 +282,20 @@ class GraphAnalyticsCache(Base):
 
 class PaperFact(Base):
     __tablename__ = "paper_facts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('extracted', 'not_stated', 'source_limited', 'failed', 'pending')",
+            name="ck_paper_facts_status",
+        ),
+        CheckConstraint(
+            "source_scope IN ('abstract_only', 'full_text_pdf', 'full_text_html', 'metadata_only', 'abstract_fallback')",
+            name="ck_paper_facts_source_scope",
+        ),
+        CheckConstraint(
+            "paper_kind IN ('survey', 'empirical', 'system', 'theory', 'unknown')",
+            name="ck_paper_facts_paper_kind",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     paper_id: Mapped[int] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)

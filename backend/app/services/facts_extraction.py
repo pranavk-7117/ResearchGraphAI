@@ -50,27 +50,62 @@ OPEN_CHALLENGES_CUES = {
 
 
 def classify_paper_kind(title: str, abstract: str | None) -> str:
-    """Classify paper into survey | system | empirical | theory | unknown based on title and abstract."""
+    """Classify paper into survey | system | empirical | theory | unknown using word-boundary regex."""
     text = f"{title} {abstract or ''}".lower()
-    if any(k in text for k in (
-        "survey", "systematic review", "scoping review", "literature review",
-        "meta-analysis", "overview of", "taxonomy of", "a review on", "a review of"
-    )):
+
+    # 1. Questionnaire / Clinical / User surveys are EMPIRICAL studies, not literature surveys
+    is_questionnaire_survey = bool(re.search(
+        r"\b(?:questionnaire|cross-sectional survey|international survey|online survey|"
+        r"survey of (?:patients|clinicians|physicians|users|experts|practitioners|nurses|surgeons|participants|respondents)|"
+        r"survey was administered|administered a survey|survey respondents|postal survey|telephone survey|"
+        r"surveyed \d+)\b",
+        text
+    ))
+
+    # 2. Literature Review / Survey
+    is_lit_survey = bool(re.search(
+        r"\b(?:systematic literature review|systematic review|scoping review|literature review|"
+        r"meta-analysis|bibliometric analysis|bibliometric review|taxonomy of|"
+        r"comprehensive survey|state-of-the-art survey|critical review|umbrella review|"
+        r"an overview on|an overview of|overview on|overview of|a review on|a review of|"
+        r"review on|review of)\b",
+        text
+    )) or (
+        bool(re.search(r"\b(?:survey|review)\b", title.lower())) and not is_questionnaire_survey
+    )
+
+    if is_lit_survey and not is_questionnaire_survey:
         return "survey"
-    if any(k in text for k in (
-        "clinical trial", "randomized controlled", "cohort", "empirical",
-        "experiment", "dataset", "longitudinal", "patients", "participants", "efficacy"
-    )):
-        return "empirical"
-    if any(k in text for k in (
-        "system", "architecture", "prototype", "platform", "framework",
-        "implementation", "hardware", "sensor", "iot", "insole", "device"
-    )):
-        return "system"
-    if any(k in text for k in (
-        "theorem", "complexity", "formal proof", "bound", "bounds", "mathematical model"
-    )):
+
+    # 3. Formal / Theoretical
+    if re.search(
+        r"\b(?:theorems?|asymptotic|formal proofs?|np-hard|np-complete|"
+        r"convergence bounds?|lower bounds?|upper bounds?|formal verification|axiomatic foundation|"
+        r"computational complexity)\b",
+        text
+    ):
         return "theory"
+
+    # 4. Empirical (clinical trials, experiments, cohorts, questionnaires)
+    if is_questionnaire_survey or re.search(
+        r"\b(?:randomized controlled trial|randomized controlled|clinical trial|cohort study|"
+        r"longitudinal study|in vivo|in vitro|retrospective study|prospective study|"
+        r"observational study|case-control|cross-sectional|empirical evaluation|"
+        r"benchmark evaluation|user study|ablation study|experimental evaluation|"
+        r"user evaluation|efficacy study|efficacy|clinical evaluation|patients|participants)\b",
+        text
+    ):
+        return "empirical"
+
+    # 5. System / Engineering (general hardware/software architecture, no topic-specific hardcoding)
+    if re.search(
+        r"\b(?:system|architecture|prototype|platform|framework|hardware|firmware|"
+        r"embedded|microcontroller|pipeline|compiler|testbed|instrumentation|"
+        r"circuit design|device|fpga|asic|iot)\b",
+        text
+    ):
+        return "system"
+
     return "empirical" if abstract and len(abstract) > 100 else "unknown"
 
 
@@ -134,13 +169,42 @@ def select_candidate_chunks(passages: list[dict[str, Any]], max_chunks: int = 10
     return list(selected_dict.values())[:max_chunks]
 
 
+LIMITATION_INDICATOR_PATTERN = re.compile(
+    r"\b(?:limitations?|limited by|limited to|restricted to|restricting|"
+    r"drawbacks?|shortcomings?|weakness(?:es)?|caveats?|"
+    r"fails? to|failed to|does not|did not|cannot|could not|unable to|lacks?|lacking|absence of|"
+    r"small sample|small cohort|only tested|only evaluated|threats? to validity|"
+    r"drift|hysteresis|overfitting|overhead|latency|noise|heterogeneity|unaddressed|"
+    r"remains a challenge|further work is needed|not generalize|generalizability|"
+    r"trade-offs?|bottlenecks?|constraints?|constrained by|vulnerabilit(?:y|ies)|under-explored|"
+    r"error rate|degradations?|degraded|sensitive to|sensitivity|insufficient)\b",
+    re.IGNORECASE
+)
+
+FUTURE_OR_CHALLENGE_PATTERN = re.compile(
+    r"\b(?:future|next step|next steps|plan to|plans to|remains open|remains unsolved|"
+    r"open problem|open challenge|unresolved|unsolved|further investigation|further research|"
+    r"direction for|avenue for|promising direction|should explore|should investigate|"
+    r"need for|promising future|prospective study|long-term study|extended to)\b",
+    re.IGNORECASE
+)
+
+
 def validate_extracted_item(
     val: str,
     field_name: str = "limitations",
     title: str = "",
     abstract: str | None = None,
 ) -> dict[str, Any]:
-    """Semantic validation of extracted scientific finding."""
+    """Semantic validation of extracted scientific finding.
+    
+    Guards against:
+    1. Empty or trivial short phrases (< 6 tokens)
+    2. Title echo (> 0.6 overlap)
+    3. Abstract echo (> 0.85 overlap with full-text available)
+    4. Generic background statements that do not express genuine limitations
+    5. Silent fallback from contribution to method description
+    """
     if not val or not val.strip():
         return {"valid": False, "reject_reason": "empty"}
 
@@ -152,8 +216,21 @@ def validate_extracted_item(
     if title and compute_token_overlap(v, title) > 0.6:
         return {"valid": False, "reject_reason": "title_echo"}
 
-    if field_name == "claimed_contributions" and ("method" in v.lower() or "propose" in v.lower()) and len(tokens) < 8:
+    if abstract and len(abstract.strip()) > 50 and compute_token_overlap(v, abstract) > 0.85:
+        return {"valid": False, "reject_reason": "abstract_echo"}
+
+    if field_name == "claimed_contributions" and ("method" in v.lower() or "propose" in v.lower()) and len(tokens) < 10:
         return {"valid": False, "reject_reason": "method_fallback"}
+
+    # Guard: A limitation MUST express a limitation/drawback/constraint/scope boundary,
+    # not just a generic background narrative like 'the number of connected vehicles has grown quickly'.
+    if field_name == "limitations":
+        if not LIMITATION_INDICATOR_PATTERN.search(v):
+            return {"valid": False, "reject_reason": "not_a_limitation"}
+
+    if field_name in ("future_work", "open_challenges"):
+        if not FUTURE_OR_CHALLENGE_PATTERN.search(v):
+            return {"valid": False, "reject_reason": "not_a_future_work_or_challenge"}
 
     return {"valid": True, "reject_reason": None}
 
@@ -402,20 +479,20 @@ class FactExtractionService:
             if len(tokens) < 2:
                 return None
 
-            # Minimum 6 tokens check only applies to narrative clauses (contributions, limitations)
+            # Minimum 6 tokens check and semantic checks apply to narrative clauses (contributions, limitations)
             is_narrative = is_contribution or field_name in ("limitations", "future_work", "open_challenges", "claimed_contributions")
-            if is_narrative and len(tokens) < 6:
-                return None
+            if is_narrative:
+                chk = validate_extracted_item(
+                    val,
+                    field_name="claimed_contributions" if is_contribution else field_name,
+                    title=paper.title,
+                    abstract=paper.abstract,
+                )
+                if not chk["valid"]:
+                    return None
 
-            # Reject title echo (>0.6 token overlap) on narrative fields
-            if is_narrative and compute_token_overlap(val, paper.title) > 0.6:
-                return None
-            if f.quote and is_narrative and compute_token_overlap(f.quote, paper.title) > 0.7:
-                return None
-
-            # Disallow silent fallback from contribution to method
-            if is_contribution and ("method" in val.lower() or "propose" in val.lower()) and len(tokens) < 8:
-                return None
+                if f.quote and compute_token_overlap(f.quote, paper.title) > 0.7:
+                    return None
 
             # 4. Quote verification
             verification = {"verified": False, "chunk_id": f.chunk_id, "match_type": "none", "score": 0.0}

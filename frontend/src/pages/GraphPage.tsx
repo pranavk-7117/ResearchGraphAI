@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Cluster, GraphData, GraphNode, Project } from "../lib/api";
-import { placeLabels } from "./graphLabelPlacer.js";
+import { filterGraphData, placeLabels } from "./graphLabelPlacer.js";
 
 // Cluster color themes matching the reference design (Emerald, Amber, Blue, Rose, Purple, Cyan, Indigo)
 export const CLUSTER_PALETTES = [
@@ -328,65 +328,19 @@ export function GraphPage({ project }: { project: Project | null }) {
 
   // Filtered nodes and edges with layer toggles, edge-weight threshold, and ego-network focus
   const filteredData = useMemo(() => {
-    let nodes = baseNodes;
-    if (selectedClusterId !== null) {
-      nodes = nodes.filter((n) => n.cluster_id === selectedClusterId);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      nodes = nodes.filter(
-        (n) => n.title.toLowerCase().includes(q) || n.authors_str.toLowerCase().includes(q)
-      );
-    }
-
-    const activeEdges = graphData.edges.filter((e) => {
-      const layer = e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic");
-      if (layer === "citation" && !enabledLayers.citation) return false;
-      if (layer === "coupling" && !enabledLayers.coupling) return false;
-      if (layer === "semantic" && !enabledLayers.semantic) return false;
-      if (layer === "semantic" && (e.score || 0) < minEdgeWeight) return false;
-      return true;
+    const res = filterGraphData({
+      baseNodes,
+      edges: graphData.edges,
+      selectedClusterId,
+      searchQuery,
+      enabledLayers,
+      minEdgeWeight,
+      egoHops,
+      selectedNodeId: selectedNode?.id ?? null,
     });
-
-    let nodeIds = new Set(nodes.map((n) => n.id));
-    const selectedId = selectedNode?.id;
-    if (egoHops !== "all" && selectedId && nodeIds.has(selectedId)) {
-      const maxHops = egoHops === "1" ? 1 : 2;
-      const egoIds = new Set<number>([selectedId]);
-      let frontier = new Set<number>([selectedId]);
-      for (let h = 0; h < maxHops; h++) {
-        const nextFrontier = new Set<number>();
-        for (const e of activeEdges) {
-          const srcId = Number(typeof e.source === "object" ? (e.source as any).id : e.source);
-          const tgtId = Number(typeof e.target === "object" ? (e.target as any).id : e.target);
-          if (frontier.has(srcId) && !egoIds.has(tgtId)) {
-            egoIds.add(tgtId);
-            nextFrontier.add(tgtId);
-          }
-          if (frontier.has(tgtId) && !egoIds.has(srcId)) {
-            egoIds.add(srcId);
-            nextFrontier.add(srcId);
-          }
-        }
-        frontier = nextFrontier;
-      }
-      nodes = nodes.filter((n) => egoIds.has(n.id));
-      nodeIds = egoIds;
-    }
-
-    const edges = activeEdges.filter((e) => {
-      const srcId = Number(typeof e.source === "object" ? (e.source as any).id : e.source);
-      const tgtId = Number(typeof e.target === "object" ? (e.target as any).id : e.target);
-      return nodeIds.has(srcId) && nodeIds.has(tgtId);
-    });
-
     return {
-      nodes, // REUSE nodes directly without re-mapping so positions fx/fy and d3 physics state are preserved!
-      links: edges.map((e) => ({
-        ...e,
-        source: typeof e.source === "object" ? (e.source as any).id : e.source,
-        target: typeof e.target === "object" ? (e.target as any).id : e.target,
-      })),
+      nodes: res.nodes,
+      links: res.edges,
     };
   }, [baseNodes, graphData.edges, selectedClusterId, searchQuery, enabledLayers, minEdgeWeight, egoHops, egoHops === "all" ? null : selectedNode?.id]);
 

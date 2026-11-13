@@ -134,7 +134,6 @@ export type StreamPaperItem = {
   topic_tag?: string | null;
   key_contribution?: string | null;
   limitations_and_gaps?: string[];
-  gaps_solved?: string[];
   extraction_status?: "extracted" | "not_stated" | "source_limited" | "failed" | "pending";
   source_scope?: "abstract_only" | "full_text_pdf" | "full_text_html" | "metadata_only";
   paper_kind?: "survey" | "empirical" | "system" | "theory" | "unknown";

@@ -217,4 +217,4 @@ def test_phase_transitions_populate_factual_key_changes_and_matching_counts():
     assert tr["paper_count"] == tr["phase_from_count"] + tr["phase_to_count"]
     assert len(tr["key_changes"]) >= 1
     assert any("New methods" in kc for kc in tr["key_changes"])
-    assert res["paper_stream"][-1]["gaps_solved"] == ["Longitudinal trial"]
+    assert res["paper_stream"][-1]["limitations_and_gaps"] == ["Longitudinal trial"]
