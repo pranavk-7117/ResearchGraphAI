@@ -1,0 +1,84 @@
+{
+  "total_papers": 10,
+  "total_gold_items": 13,
+  "total_extracted_items": 13,
+  "valid_extracted_items": 13,
+  "matched_gold_items": 13,
+  "precision": 1.0,
+  "quote_verification_rate": 0.3846,
+  "recall": 1.0,
+  "f1": 1.0,
+  "target_passed": true,
+  "papers": [
+    {
+      "doi": "10.3390/s21186178",
+      "title": "Smart Insole System for Continuous Plantar Pressure Monitoring",
+      "gold_count": 2,
+      "extracted_count": 2,
+      "matched_count": 2
+    },
+    {
+      "doi": "10.3390/s22030825",
+      "title": "Textile-Based Wearable Sensors for Diabetic Foot Prevention",
+      "gold_count": 2,
+      "extracted_count": 2,
+      "matched_count": 2
+    },
+    {
+      "doi": "10.1186/s12984-021-00892-x",
+      "title": "Continuous in-shoe pressure measurement in diabetes: A systematic review",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    },
+    {
+      "doi": "10.3390/app11041695",
+      "title": "Machine Learning Approaches for Plantar Pressure Classification in Diabetic Gait",
+      "gold_count": 2,
+      "extracted_count": 2,
+      "matched_count": 2
+    },
+    {
+      "doi": "10.1371/journal.pone.0247444",
+      "title": "Validation of a Novel Optical Insole for Gait Analysis",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    },
+    {
+      "doi": "10.1109/JBHI.2020.3014567",
+      "title": "Graph Neural Networks for Wearable Sensor Activity Recognition",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    },
+    {
+      "doi": "10.3389/fendo.2020.00567",
+      "title": "Diabetic Foot Ulcer Risk Stratification: A Scoping Review",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    },
+    {
+      "doi": "10.3390/s20195543",
+      "title": "Low-Cost Piezoresistive Insole Matrix for Gait Assessment",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    },
+    {
+      "doi": "10.1038/s41598-021-89012-3",
+      "title": "Thermal and Pressure Insole Monitoring for Early Diabetic Ulcer Detection",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    },
+    {
+      "doi": "10.1145/3341163.3347741",
+      "title": "Deep Gait Analysis with Inertial and Plantar Pressure Sensors",
+      "gold_count": 1,
+      "extracted_count": 1,
+      "matched_count": 1
+    }
+  ]
+}

@@ -78,9 +78,8 @@ class PDFProcessingService:
         for page_idx in range(total_pages):
             page = doc[page_idx]
             text = page.get_text("text") or ""
-            clean_text = " ".join(text.split())
-            total_extracted_chars += len(clean_text)
-            pages_text.append((page_idx + 1, clean_text))
+            total_extracted_chars += len(" ".join(text.split()))
+            pages_text.append((page_idx + 1, text))
 
         # Check for scanned / image-only PDFs
         if total_extracted_chars < 200:
@@ -197,7 +196,10 @@ class PDFProcessingService:
         chunk_size: int = 1000,
         overlap: int = 150,
     ) -> list[ExtractedChunk]:
-        """Produce section-aware chunks that preserve page_start, page_end, and section."""
+        """
+        Produce section-aware chunks that split mid-page at genuine line-anchored heading boundaries.
+        Never allows a narrative body word (e.g. 'results' in a sentence) to re-classify earlier text.
+        """
         chunks: list[ExtractedChunk] = []
         chunk_idx = 0
 
@@ -206,47 +208,96 @@ class PDFProcessingService:
         page_start = 1
         page_end = 1
 
-        section_pattern = re.compile(
-            r"\b(abstract|introduction|related work|background|methodology|methods|experiments|results|discussion|conclusion|limitations)\b",
-            re.I,
+        heading_pattern = re.compile(
+            r"^\s*(?:(?:[0-9]+(?:\.[0-9]+)*\.?|[IVXLCDM]+\.?)\s+)?(limitations?(?:\s+(?:and|&)\s+discussion)?|discussion(?:\s+(?:and|&)\s+(?:future\s+work|conclusions?))?|conclusions?(?:\s+(?:and|&)\s+future\s+work)?|future\s+work|open\s+challenges|threats\s+to\s+validity|related\s+work|methodology|methods|experiments?|results?|background|introduction|abstract)\s*[:.-]?\s*$",
+            re.IGNORECASE,
         )
 
-        for page_num, text in pages_text:
-            if not text:
+        def normalize_section_name(raw: str) -> str:
+            lower = raw.lower().strip()
+            if "limitation" in lower:
+                return "Limitations"
+            if "future work" in lower or "open challenge" in lower:
+                return "Future Work"
+            if "conclusion" in lower:
+                return "Conclusion"
+            if "discussion" in lower:
+                return "Discussion"
+            if "result" in lower:
+                return "Results"
+            if "method" in lower:
+                return "Methods"
+            if "experiment" in lower:
+                return "Experiments"
+            if "related work" in lower:
+                return "Related Work"
+            if "background" in lower:
+                return "Background"
+            if "abstract" in lower:
+                return "Abstract"
+            return raw.title()
+
+        for page_num, raw_text in pages_text:
+            if not raw_text:
                 continue
 
-            # Check if section header appears in text
-            sec_match = section_pattern.search(text)
-            if sec_match:
-                current_section = sec_match.group(1).title()
-
-            sentences = re.split(r"(?<=[.!?])\s+", text)
-            for sentence in sentences:
-                sentence_clean = sentence.strip()
-                if not sentence_clean:
+            lines = raw_text.splitlines()
+            for line in lines:
+                line_stripped = line.strip()
+                if not line_stripped:
                     continue
 
-                if len(current_text) + len(sentence_clean) > chunk_size and len(current_text) > 300:
-                    text_hash = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
-                    chunks.append(
-                        ExtractedChunk(
-                            chunk_index=chunk_idx,
-                            page_start=page_start,
-                            page_end=page_num,
-                            section=current_section,
-                            text=current_text,
-                            text_hash=text_hash,
+                # Check if this line is an anchored section heading
+                m = heading_pattern.match(line_stripped)
+                if m and len(line_stripped) < 70:
+                    detected_section = normalize_section_name(m.group(1))
+                    # Mid-page split: if we already have text under current_section, emit it as a chunk
+                    if current_text and len(current_text) > 40:
+                        text_hash = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+                        chunks.append(
+                            ExtractedChunk(
+                                chunk_index=chunk_idx,
+                                page_start=page_start,
+                                page_end=page_end,
+                                section=current_section,
+                                text=current_text,
+                                text_hash=text_hash,
+                            )
                         )
-                    )
-                    chunk_idx += 1
-                    # Retain overlap from end of current_text
-                    current_text = current_text[-overlap:] + " " + sentence_clean
-                    page_start = page_num
-                else:
-                    if not current_text:
+                        chunk_idx += 1
+                        current_text = ""
                         page_start = page_num
-                    current_text = f"{current_text} {sentence_clean}".strip()
-                    page_end = page_num
+
+                    current_section = detected_section
+                    continue
+
+                # Normal content line: split by sentences and append to current chunk
+                sentences = re.split(r"(?<=[.!?])\s+", line_stripped)
+                for sentence in sentences:
+                    sentence_clean = sentence.strip()
+                    if not sentence_clean:
+                        continue
+
+                    if len(current_text) + len(sentence_clean) > chunk_size and len(current_text) > 300:
+                        text_hash = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
+                        chunks.append(
+                            ExtractedChunk(
+                                chunk_index=chunk_idx,
+                                page_start=page_start,
+                                page_end=page_num,
+                                section=current_section,
+                                text=current_text,
+                                text_hash=text_hash,
+                            )
+                        )
+                        chunk_idx += 1
+                        current_text = current_text[-overlap:] + " " + sentence_clean
+                        page_start = page_num
+                    else:
+                        if not current_text:
+                            page_start = page_num
+                        current_text = f"{current_text} {sentence_clean}".strip()
+                        page_end = page_num
 
         if current_text and len(current_text) > 50:
             text_hash = hashlib.sha256(current_text.encode("utf-8")).hexdigest()

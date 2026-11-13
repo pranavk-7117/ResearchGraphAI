@@ -26,6 +26,7 @@ from app.services.discovery import DiscoveryService
 from app.services.embeddings import EmbeddingService
 from app.services.evolution import EvolutionService
 from app.services.facts_extraction import FactExtractionService
+from app.services.fulltext import FullTextResolver
 from app.services.gaps import GapsService
 from app.services.literature_review import LiteratureReviewService
 from app.services.pdf_processing import PDFProcessingService
@@ -236,32 +237,39 @@ class JobService:
         per_paper_results = dict(job.per_paper_results or {})
         warnings = list(job.warnings or [])
 
-        # Fast parallel pre-fetch of PDFs (5 concurrent workers, 7s timeout)
-        pdf_urls_map: dict[int, str] = {}
-        for pp in selected_project_papers:
-            p_obj = db.query(models.Paper.id, models.Paper.oa_pdf_url).filter(models.Paper.id == pp.paper_id).first()
-            if p_obj and p_obj.oa_pdf_url:
-                pdf_urls_map[p_obj.id] = p_obj.oa_pdf_url
+        # Multi-source parallel full-text resolution cascade (E4)
+        fulltext_resolver = FullTextResolver()
+        pdf_cache: dict[int, tuple[bytes | None, str]] = {}
 
-        pdf_cache: dict[int, bytes | None] = {}
-        def fetch_pdf(pid: int, url: str) -> tuple[int, bytes | None]:
+        def fetch_paper_fulltext(pid: int, paper_dict: dict[str, Any], oa_url: str | None) -> tuple[int, bytes | None, str]:
             try:
-                with httpx.Client(timeout=7.0, follow_redirects=True, headers={"User-Agent": "ResearchGraphAI/2.0"}) as client:
-                    resp = client.get(url)
-                    if resp.status_code == 200 and resp.content.startswith(b"%PDF-"):
-                        return (pid, resp.content)
-            except Exception:
-                return (pid, None)
-            return (pid, None)
+                b, note = fulltext_resolver.fetch_full_text(paper_dict, stored_oa_url=oa_url)
+                return (pid, b, note)
+            except Exception as exc:
+                return (pid, None, f"error_{type(exc).__name__}")
 
-        if pdf_urls_map:
-            with ThreadPoolExecutor(max_workers=min(5, len(pdf_urls_map))) as pool:
-                futures = [pool.submit(fetch_pdf, pid, url) for pid, url in pdf_urls_map.items()]
+        papers_to_fetch = []
+        for pp in selected_project_papers:
+            p_obj = db.query(models.Paper).filter(models.Paper.id == pp.paper_id).first()
+            if p_obj:
+                p_dict = {
+                    "doi": p_obj.doi,
+                    "title": p_obj.title,
+                    "url": p_obj.original_url,
+                    "oa_pdf_url": p_obj.oa_pdf_url,
+                }
+                papers_to_fetch.append((p_obj.id, p_dict, p_obj.oa_pdf_url))
+
+        if papers_to_fetch:
+            with ThreadPoolExecutor(max_workers=min(5, len(papers_to_fetch))) as pool:
+                futures = [
+                    pool.submit(fetch_paper_fulltext, pid, p_dict, oa_url)
+                    for pid, p_dict, oa_url in papers_to_fetch
+                ]
                 for f in futures:
                     try:
-                        pid, b = f.result()
-                        if b:
-                            pdf_cache[pid] = b
+                        pid, b, note = f.result()
+                        pdf_cache[pid] = (b, note)
                     except Exception:
                         pass
 
@@ -276,7 +284,10 @@ class JobService:
                 job.progress = round(0.1 + 0.6 * (idx / total_papers), 2)
                 db.commit()
 
-                pdf_bytes = pdf_cache.get(paper.id)
+                cached_entry = pdf_cache.get(paper.id)
+                pdf_bytes = cached_entry[0] if cached_entry else None
+                fulltext_note = cached_entry[1] if cached_entry else "abstract_only_no_source"
+                pp.fulltext_note = fulltext_note
 
                 # Extract text & chunks
                 if pdf_bytes:

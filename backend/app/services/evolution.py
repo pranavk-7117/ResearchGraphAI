@@ -522,14 +522,37 @@ class EvolutionService:
             ]
             f = facts_map.get(p.id)
             method_val = f.method.get("value") if f and isinstance(f.method, dict) else None
-            lim_val = f.limitations.get("value") if f and isinstance(f.limitations, dict) else None
-            fw_val = f.future_work.get("value") if f and isinstance(f.future_work, dict) else None
             contrib_val = (
                 f.claimed_contributions.get("value")
                 if f and isinstance(f.claimed_contributions, dict)
                 else None
             )
-            gap_items = [x for x in (lim_val, fw_val) if x]
+
+            def extract_text_items(field_val: Any) -> list[str]:
+                if not field_val:
+                    return []
+                if isinstance(field_val, list):
+                    res = []
+                    for it in field_val:
+                        if isinstance(it, dict) and it.get("value"):
+                            res.append(str(it["value"]))
+                        elif isinstance(it, str):
+                            res.append(it)
+                    return res
+                if isinstance(field_val, dict) and field_val.get("value"):
+                    return [str(field_val["value"])]
+                if isinstance(field_val, str):
+                    return [field_val]
+                return []
+
+            lim_items = extract_text_items(f.limitations) if f else []
+            fw_items = extract_text_items(f.future_work) if f else []
+            chal_items = extract_text_items(getattr(f, "open_challenges", None)) if f else []
+            gap_items = lim_items + fw_items + chal_items
+
+            status = getattr(f, "status", None)
+            if not status:
+                status = "extracted" if gap_items else ("source_limited" if getattr(f, "abstract_only", True) else "not_stated")
 
             return {
                 "id": p.id,
@@ -543,7 +566,12 @@ class EvolutionService:
                 "url": p.original_url or (f"https://doi.org/{p.doi}" if p.doi else None),
                 "topic_tag": paper_cluster_map.get(p.id),
                 "key_contribution": contrib_val or method_val,
+                "limitations_and_gaps": gap_items,
                 "gaps_solved": gap_items,
+                "extraction_status": status,
+                "source_scope": getattr(f, "source_scope", "abstract_only") if f else "abstract_only",
+                "paper_kind": getattr(f, "paper_kind", "unknown") if f else "unknown",
+                "error_reason": getattr(f, "error_reason", None) if f else None,
             }
 
         # Group papers into up to 4 chronological windows; OMIT empty windows

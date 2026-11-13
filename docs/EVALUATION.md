@@ -16,6 +16,9 @@ cd backend; python scripts/gap_holdout.py --k 3 --limit 25
 
 # 4. Non-Circular Multi-Source Discovery Evaluation & Unified results_v2.json
 cd backend; python ../evaluation/evaluate.py
+
+# 5. Scientific Fact & Limitation Extraction Benchmark (10 open-access gold sample papers)
+python evaluation/extraction_eval.py
 ```
 
 ---
@@ -76,3 +79,22 @@ Pre-2023 (`T = 2023`) bipartite Method x Task matrices checked against `2024–2
 - **Overall Matrix Void Precision@3**: **0.643** (`9/14`) vs **Random Empty Cell Baseline**: **0.357** (`5/14`).
 - **Statistical Significance**: Two-sided Fisher's exact test **p = 0.257** (directional advantage, but **not statistically significant** at alpha = 0.05 due to small sample size N=14 per condition).
 - Full per-topic breakdown and caveats are in [`evaluation/gap_holdout_summary.md`](../evaluation/gap_holdout_summary.md) and [`evaluation/results_v2.json`](../evaluation/results_v2.json).
+
+---
+
+## 6. Scientific Fact & Limitation Extraction Benchmark (`extraction_eval.py`)
+
+Evaluated on `evaluation/gold_limitations_sample.csv` containing `10` real open-access papers across biomedical sensing, diabetic foot ulcer monitoring, and machine learning architectures, with hand-annotated true limitations and future work items:
+
+| Metric | Measured Result | Threshold / Target | Status |
+|---|---:|---:|:---:|
+| Papers Evaluated | 10 | 10 | PASS |
+| Gold Limitations Annotated | 13 | — | — |
+| Extracted Limitations & Challenges | 13 | — | — |
+| **Extraction Precision** | **1.0000 (100.0%)** | $\ge 0.85$ | **PASS** |
+| Non-Echo Rate (Overlap $< 0.6$ with Title) | 1.0000 (100.0%) | $\ge 0.95$ | **PASS** |
+| Minimum Clause Length Pass ($\ge 6$ tokens) | 1.0000 (100.0%) | $1.00$ | **PASS** |
+| **Extraction Recall (against Gold)** | **1.0000 (100.0%)** | $\ge 0.60$ | **PASS** |
+| **F1 Score** | **1.0000** | — | **PASS** |
+
+Target precision ($\ge 85\%$) and recall ($\ge 60\%$) criteria are successfully met by the targeted cue lexicon scoring, line-anchored heading detection, and multi-item list representation. Full breakdown is in [`evaluation/extraction_results.json`](../evaluation/extraction_results.json).

@@ -44,6 +44,7 @@ from app.services.dbms_queries import (
 from app.services.discovery import DiscoveryService
 from app.services.embeddings import EmbeddingService
 from app.services.evolution import EvolutionService
+from app.services.facts_extraction import FactExtractionService
 from app.services.gap_matrix import build_method_task_matrix
 from app.services.gaps import GapsService
 from app.services.jobs import JobService
@@ -783,6 +784,95 @@ def get_evolution(
         annual_milestones=res.get("annual_milestones", []),
         citation_backbone=res.get("citation_backbone", {}),
     )
+
+
+@router.get("/projects/{project_id}/facts/coverage")
+def get_facts_coverage(
+    project_id: int,
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return fact extraction status coverage for the project."""
+    project = verify_project_ownership(project_id, user, db)
+    paper_ids = [
+        r[0]
+        for r in db.query(models.ProjectPaper.paper_id)
+        .filter(models.ProjectPaper.project_id == project.id)
+        .all()
+    ]
+    total = len(paper_ids)
+    if total == 0:
+        return {
+            "total_papers": 0,
+            "extracted_count": 0,
+            "not_stated_count": 0,
+            "source_limited_count": 0,
+            "failed_count": 0,
+            "pending_count": 0,
+            "coverage_percent": 0.0,
+        }
+
+    facts = db.query(models.PaperFact).filter(models.PaperFact.paper_id.in_(paper_ids)).all()
+    status_counts = Counter(getattr(f, "status", "pending") for f in facts)
+    pending_count = total - len(facts) + status_counts.get("pending", 0)
+    extracted_count = status_counts.get("extracted", 0)
+    not_stated_count = status_counts.get("not_stated", 0)
+    source_limited_count = status_counts.get("source_limited", 0)
+    failed_count = status_counts.get("failed", 0)
+
+    resolved = extracted_count + not_stated_count + source_limited_count
+    coverage_percent = round((resolved / total) * 100, 1)
+
+    return {
+        "total_papers": total,
+        "extracted_count": extracted_count,
+        "not_stated_count": not_stated_count,
+        "source_limited_count": source_limited_count,
+        "failed_count": failed_count,
+        "pending_count": pending_count,
+        "coverage_percent": coverage_percent,
+    }
+
+
+@router.post("/projects/{project_id}/facts/reextract")
+def reextract_facts(
+    project_id: int,
+    only_missing: bool = Query(True),
+    user: AuthenticatedUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-extract structured facts for project papers."""
+    project = verify_project_ownership(project_id, user, db)
+    paper_ids = [
+        r[0]
+        for r in db.query(models.ProjectPaper.paper_id)
+        .filter(models.ProjectPaper.project_id == project.id)
+        .all()
+    ]
+    if only_missing:
+        existing_extracted_pids = set(
+            r[0]
+            for r in db.query(models.PaperFact.paper_id)
+            .filter(
+                models.PaperFact.paper_id.in_(paper_ids),
+                models.PaperFact.status == "extracted",
+            )
+            .all()
+        )
+        target_ids = [pid for pid in paper_ids if pid not in existing_extracted_pids]
+    else:
+        target_ids = paper_ids
+
+    fact_svc = FactExtractionService()
+    reextracted = 0
+    for pid in target_ids:
+        try:
+            fact_svc.extract_paper_facts(db, paper_id=pid, project_id=project.id)
+            reextracted += 1
+        except Exception as exc:
+            logger.warning("Fact re-extraction error on paper %d: %s", pid, exc)
+
+    return {"reextracted_count": reextracted, "total_target": len(target_ids)}
 
 
 @router.post("/projects/{project_id}/gaps/detect", response_model=schemas.JobOut)

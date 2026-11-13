@@ -82,3 +82,40 @@ def test_storage_service_save_and_retrieve():
 
     # Clean up
     storage.delete_document(path)
+
+
+def test_section_detection_line_anchored_and_midpage_split():
+    """Body word 'results' must not change section, while genuine heading '5. Limitations' splits cleanly."""
+    doc = pymupdf.open()
+    p1 = doc.new_page()
+    # Line 1: Introduction header
+    # Line 2-3: Text containing the word 'results' in narrative body
+    # Line 4: Explicit 5. Limitations header
+    # Line 5: Text discussing limitations
+    content = (
+        "1. Introduction\n"
+        "Here we discuss preliminary background. Our experimental results were promising across benchmarks.\n"
+        "However more work is needed in the future to generalize across all systems.\n"
+        "5. Limitations\n"
+        "The primary limitation of our sensor approach is battery endurance under continuous 100Hz sampling.\n"
+        "Future clinical validations must test larger diabetic cohorts over extended longitudinal periods.\n"
+    )
+    p1.insert_text((50, 72), content)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+
+    parser = PDFProcessingService()
+    res = parser.process_pdf_bytes(pdf_bytes, known_title="Sensor Limitations Study", chunk_size=200, chunk_overlap=30)
+
+    sections = [c.section for c in res.chunks]
+    # 'Introduction' must be present and 'Limitations' must be present
+    assert "Introduction" in sections
+    assert "Limitations" in sections
+
+    # Crucially, the text containing the word 'results' in the intro must NOT be classified as 'Results'
+    intro_chunk = next(c for c in res.chunks if "Our experimental results" in c.text)
+    assert intro_chunk.section == "Introduction"
+
+    lim_chunk = next(c for c in res.chunks if "primary limitation" in c.text)
+    assert lim_chunk.section == "Limitations"
+

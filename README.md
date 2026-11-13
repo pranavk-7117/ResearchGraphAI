@@ -33,8 +33,8 @@ ResearchGraphAI is an academic research workspace built with **FastAPI + SQLAlch
 - **Projects & DBMS Stats**: `POST/GET/DELETE /api/projects`, `GET /api/projects/{id}/stats`, `POST /api/projects/{id}/stats/refresh`
 - **Discovery & Completeness**: `POST /api/projects/{id}/discover`, `GET /api/projects/{id}/candidates`, `GET /api/projects/{id}/completeness`
 - **Processing & Jobs**: `POST /api/projects/{id}/select-candidates`, `POST /api/projects/{id}/process`, `GET /api/jobs/{job_id}`
-- **Graph, Clusters & Reading Paths**: `GET /api/projects/{id}/graph`, `GET /api/projects/{id}/backbone`, `POST /api/projects/{id}/clusters/recompute`, `GET /api/projects/{id}/cluster-representatives`, `GET /api/projects/{id}/autocomplete`, `GET /api/projects/{id}/hasse`, `GET /api/projects/{id}/reading-path`, `GET /api/projects/{id}/ancestors`
-- **Evolution, Gaps & Matrix**: `GET /api/projects/{id}/evolution`, `GET /api/projects/{id}/gaps`, `POST /api/projects/{id}/gaps/detect`, `GET /api/projects/{id}/gap-matrix`, `POST /api/gaps/{gap_id}/feedback`
+- **Graph, Clusters & Reading Paths**: `GET /api/projects/{id}/graph`, `POST /api/projects/{id}/recluster`, `GET /api/projects/{id}/backbone`, `POST /api/projects/{id}/clusters/recompute`, `GET /api/projects/{id}/cluster-representatives`, `GET /api/projects/{id}/autocomplete`, `GET /api/projects/{id}/hasse`, `GET /api/projects/{id}/reading-path`, `GET /api/projects/{id}/ancestors`
+- **Evolution, Facts & Gaps**: `GET /api/projects/{id}/evolution`, `GET /api/projects/{id}/facts/coverage`, `POST /api/projects/{id}/facts/reextract`, `GET /api/projects/{id}/gaps`, `POST /api/projects/{id}/gaps/detect`, `GET /api/projects/{id}/gap-matrix`, `POST /api/gaps/{gap_id}/feedback`
 - **RAG Chat & Manuscript Comparison**: `POST /api/projects/{id}/chat`, `POST /api/projects/{id}/upload-compare`, `GET /api/projects/{id}/analyses`
 
 ---
@@ -69,7 +69,7 @@ cd frontend && npm install && npm run dev -- --port 5174
 
 ## 4. Tests & Empirical Evaluation Reproduction
 
-### Automated Test Suite (**63 backend test functions + 5 frontend tests**)
+### Automated Test Suite (**80 backend test cases + 12 frontend tests**)
 Covers unit tests, randomized property-oracle checks against `networkx`/`heapq`/`dict`, database isolation guards (protecting production Supabase), and PostgreSQL integration tests (RLS/isolation, GIN FTS, `pgvector` HNSW, triggers, views, `WITH RECURSIVE`, `RANK() OVER`, unique constraints):
 ```bash
 cd backend && python -m pytest tests/ -v
@@ -83,6 +83,7 @@ cd backend && python ../evaluation/evaluate_retrieval.py     # BEIR SciFact (n=3
 cd backend && python ../evaluation/evaluate_attribution.py   # 30 domain + 10 off-topic Qs: 90.8% quote precision, 90% refusal
 cd backend && python scripts/gap_holdout.py --k 3 --limit 25 # 5-topic pre-2023 holdout: Precision@3=0.643 vs 0.357 random
 cd backend && python ../evaluation/evaluate.py               # Non-circular external Cross-Encoder discovery benchmark -> results_v2.json
+python evaluation/extraction_eval.py                         # 10 OA gold sample papers: Precision=100.0%, Recall=100.0%, F1=1.0000
 ```
 
 ---

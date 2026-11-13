@@ -50,6 +50,31 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(skip_marker)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def run_alembic_migrations_on_test_db():
+    """When TEST_DATABASE_URL is set, automatically run alembic upgrade head on the scratch database."""
+    test_db_url = os.getenv("TEST_DATABASE_URL", "").strip()
+    if not test_db_url:
+        return
+    permitted, _ = is_live_db_permitted()
+    if not permitted:
+        return
+
+    try:
+        from alembic.config import Config
+        from alembic import command
+        from pathlib import Path
+
+        backend_dir = Path(__file__).resolve().parent.parent
+        alembic_cfg_path = backend_dir / "alembic.ini"
+        if alembic_cfg_path.exists():
+            alembic_cfg = Config(str(alembic_cfg_path))
+            alembic_cfg.set_main_option("sqlalchemy.url", test_db_url)
+            command.upgrade(alembic_cfg, "head")
+    except Exception as e:
+        pytest.fail(f"Failed to run alembic upgrade head on TEST_DATABASE_URL: {e}")
+
+
 @pytest.fixture(scope="session")
 def test_db_session_factory():
     permitted, url = is_live_db_permitted()

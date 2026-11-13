@@ -158,6 +158,7 @@ class ProjectPaper(Base):
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
     processing_status: Mapped[str] = mapped_column(String(50), default="discovered")
     abstract_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    fulltext_note: Mapped[str | None] = mapped_column(String(100), nullable=True)
     sources: Mapped[list[str]] = mapped_column(JSONB, default=list)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -293,9 +294,20 @@ class PaperFact(Base):
     dataset: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     results: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    limitations: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    future_work: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    limitations: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB, nullable=True)
+    future_work: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB, nullable=True)
+    open_challenges: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSONB, nullable=True)
     claimed_contributions: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(50), default="pending", index=True)
+    # extracted | not_stated | source_limited | failed | pending
+    source_scope: Mapped[str] = mapped_column(String(50), default="abstract_only")
+    # abstract_only | full_text_pdf | full_text_html | metadata_only
+    paper_kind: Mapped[str] = mapped_column(String(50), default="unknown")
+    # survey | empirical | system | theory | unknown
+    error_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     
     extraction_model: Mapped[str] = mapped_column(String(100), default="groq")
     abstract_only: Mapped[bool] = mapped_column(Boolean, default=True)

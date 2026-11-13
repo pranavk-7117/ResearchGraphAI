@@ -68,6 +68,18 @@ export function EvolutionPage({ project }: { project: Project | null }) {
   const [streamTopicFilter, setStreamTopicFilter] = useState<string>("all");
   const [streamSearchQuery, setStreamSearchQuery] = useState("");
 
+  // Facts coverage state (Task E8)
+  const [coverage, setCoverage] = useState<{
+    total_papers: number;
+    extracted_count: number;
+    not_stated_count: number;
+    source_limited_count: number;
+    failed_count: number;
+    coverage_percent: number;
+  } | null>(null);
+  const [showCoverageDetails, setShowCoverageDetails] = useState(false);
+  const [reextracting, setReextracting] = useState(false);
+
   useEffect(() => {
     if (project) {
       loadEvolution();
@@ -79,16 +91,31 @@ export function EvolutionPage({ project }: { project: Project | null }) {
     setLoading(true);
     setError(null);
     try {
-      const [evoData, cData] = await Promise.all([
+      const [evoData, cData, covData] = await Promise.all([
         api.evolution.get(project.id),
         api.clusters.get(project.id),
+        api.facts.coverage(project.id).catch(() => null),
       ]);
       setData(evoData);
       setClusters(cData);
+      if (covData) setCoverage(covData);
     } catch (err: any) {
       setError(err?.message || "Failed to load literature evolution.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleReextract() {
+    if (!project || reextracting) return;
+    setReextracting(true);
+    try {
+      await api.facts.reextract(project.id, true);
+      await loadEvolution();
+    } catch (err: any) {
+      setError(err?.message || "Re-extraction failed.");
+    } finally {
+      setReextracting(false);
     }
   }
 
@@ -210,26 +237,124 @@ export function EvolutionPage({ project }: { project: Project | null }) {
               Visualizing how research methods, evidence and findings have evolved over time.
             </p>
           </div>
-          <button
-            onClick={loadEvolution}
-            disabled={loading}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "7px 14px",
-              background: "white",
-              border: "1px solid #cbd5e1",
-              borderRadius: 6,
-              fontSize: 12,
-              fontWeight: 500,
-              cursor: "pointer",
-              color: "#334155",
-              boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-            }}
-          >
-            <RefreshCw size={13} className={loading ? "spin" : ""} /> Refresh Analysis
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", position: "relative" }}>
+            {coverage && (
+              <div style={{ position: "relative" }}>
+                <button
+                  type="button"
+                  onClick={() => setShowCoverageDetails((prev) => !prev)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "6px 12px",
+                    background: coverage.coverage_percent >= 80 ? "#ecfdf5" : "#fffbeb",
+                    border: `1px solid ${coverage.coverage_percent >= 80 ? "#a7f3d0" : "#fde68a"}`,
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: coverage.coverage_percent >= 80 ? "#065f46" : "#92400e",
+                    cursor: "pointer",
+                  }}
+                  title="Click to view extraction status breakdown"
+                >
+                  <Sparkles size={13} />
+                  Facts Coverage: {coverage.coverage_percent}% ({coverage.extracted_count}/{coverage.total_papers})
+                </button>
+
+                {showCoverageDetails && (
+                  <div
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "100%",
+                      marginTop: 6,
+                      background: "white",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 8,
+                      boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1)",
+                      padding: 12,
+                      width: 260,
+                      zIndex: 30,
+                      fontSize: 12,
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+                      <span>Extraction Status Breakdown</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowCoverageDetails(false)}
+                        style={{ border: "none", background: "none", cursor: "pointer", color: "#94a3b8" }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, color: "#334155" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>Extracted:</span>
+                        <strong style={{ color: "#059669" }}>{coverage.extracted_count}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>Source Limited (abstract only):</span>
+                        <strong style={{ color: "#d97706" }}>{coverage.source_limited_count}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>Not Stated in text:</span>
+                        <strong style={{ color: "#64748b" }}>{coverage.not_stated_count}</strong>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span>Failed / Degraded:</span>
+                        <strong style={{ color: "#dc2626" }}>{coverage.failed_count}</strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
+              onClick={handleReextract}
+              disabled={reextracting || loading}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "7px 14px",
+                background: "#f8fafc",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: (reextracting || loading) ? "not-allowed" : "pointer",
+                color: "#334155",
+              }}
+              title="Re-extract facts for papers with missing or degraded facts"
+            >
+              <Sparkles size={13} className={reextracting ? "spin" : ""} />
+              {reextracting ? "Re-extracting..." : "Re-extract missing"}
+            </button>
+
+            <button
+              onClick={loadEvolution}
+              disabled={loading}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "7px 14px",
+                background: "white",
+                border: "1px solid #cbd5e1",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+                color: "#334155",
+                boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+              }}
+            >
+              <RefreshCw size={13} className={loading ? "spin" : ""} /> Refresh Analysis
+            </button>
+          </div>
         </div>
       </div>
 
@@ -634,6 +759,11 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                               </div>
 
                               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                                {p.paper_kind && p.paper_kind !== "unknown" && (
+                                  <span style={{ fontSize: 11, background: "#f1f5f9", color: "#475569", padding: "3px 8px", borderRadius: 6, fontWeight: 600, textTransform: "capitalize" }}>
+                                    {p.paper_kind}
+                                  </span>
+                                )}
                                 <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 6 }}>
                                   <Quote size={11} /> {p.citation_count} Citations
                                 </span>
@@ -670,26 +800,47 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                   <Lightbulb size={13} /> Key Contribution
                                 </div>
                                 <div style={{ fontSize: 11, color: "#334155", lineHeight: 1.35 }}>
-                                  {p.key_contribution || "Not extracted yet"}
+                                  {p.key_contribution || "Not stated in analyzed text"}
                                 </div>
                               </div>
 
                               {/* Col 2: Gaps / Limitations Noted */}
                               <div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: "#059669", marginBottom: 4 }}>
-                                  <CheckCircle2 size={13} /> Limitations / Gaps
+                                  <CheckCircle2 size={13} /> {p.paper_kind === "survey" ? "Open Challenges" : "Limitations / Gaps"}
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                                  {p.gaps_solved && p.gaps_solved.length > 0 ? (
-                                    p.gaps_solved.map((g, gIdx) => (
-                                      <div key={gIdx} style={{ fontSize: 11, color: "#334155", display: "flex", alignItems: "flex-start", gap: 4 }}>
-                                        <span style={{ color: "#059669", fontWeight: 700 }}>•</span>
-                                        <span>{g}</span>
-                                      </div>
-                                    ))
-                                  ) : (
-                                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Not extracted</span>
-                                  )}
+                                  {(() => {
+                                    const list = (p.limitations_and_gaps && p.limitations_and_gaps.length > 0)
+                                      ? p.limitations_and_gaps
+                                      : (p.gaps_solved && p.gaps_solved.length > 0)
+                                        ? p.gaps_solved
+                                        : [];
+                                    if (list.length > 0) {
+                                      return list.map((g, gIdx) => {
+                                        const text = typeof g === "string" ? g : (g.value || JSON.stringify(g));
+                                        return (
+                                          <div key={gIdx} style={{ fontSize: 11, color: "#334155", display: "flex", alignItems: "flex-start", gap: 4 }}>
+                                            <span style={{ color: "#059669", fontWeight: 700 }}>•</span>
+                                            <span>{text}</span>
+                                          </div>
+                                        );
+                                      });
+                                    }
+                                    if (p.extraction_status === "source_limited") {
+                                      return <span style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>Source limited (abstract only — full text not found in open access)</span>;
+                                    }
+                                    if (p.extraction_status === "not_stated") {
+                                      return <span style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>Authors did not state explicit limitations in the analyzed text</span>;
+                                    }
+                                    if (p.extraction_status === "pending") {
+                                      return <span style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>Extraction queued</span>;
+                                    }
+                                    if (p.extraction_status === "failed") {
+                                      return <span style={{ fontSize: 11, color: "#dc2626", fontStyle: "italic" }}>Extraction degraded ({p.error_reason || "timeout"})</span>;
+                                    }
+                                    return <span style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>Not stated in analyzed text</span>;
+                                  })()}
                                 </div>
                               </div>
 
@@ -1198,8 +1349,8 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                     <span style={{
                       fontSize: 11,
                       fontWeight: 700,
-                      background: (f.kind === "confirms" || f.kind === "extends" || f.kind === "finding_confirms") ? "#dcfce7" : f.kind === "insufficient_evidence" ? "#fef3c7" : "#fee2e2",
-                      color: (f.kind === "confirms" || f.kind === "extends" || f.kind === "finding_confirms") ? "#166534" : f.kind === "insufficient_evidence" ? "#92400e" : "#991b1b",
+                      background: (f.kind === "confirms" || f.kind === "finding_confirms") ? "#dcfce7" : f.kind === "insufficient_evidence" ? "#fef3c7" : "#fee2e2",
+                      color: (f.kind === "confirms" || f.kind === "finding_confirms") ? "#166534" : f.kind === "insufficient_evidence" ? "#92400e" : "#991b1b",
                       padding: "2px 8px",
                       borderRadius: 4,
                     }}>

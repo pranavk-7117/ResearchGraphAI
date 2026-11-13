@@ -133,7 +133,12 @@ export type StreamPaperItem = {
   url?: string | null;
   topic_tag?: string | null;
   key_contribution?: string | null;
+  limitations_and_gaps?: string[];
   gaps_solved?: string[];
+  extraction_status?: "extracted" | "not_stated" | "source_limited" | "failed" | "pending";
+  source_scope?: "abstract_only" | "full_text_pdf" | "full_text_html" | "metadata_only";
+  paper_kind?: "survey" | "empirical" | "system" | "theory" | "unknown";
+  error_reason?: string | null;
 };
 
 export type EvolutionPhase = {
@@ -515,6 +520,23 @@ export const api = {
   },
   evolution: {
     get: (projectId: number) => request<EvolutionData>(`/projects/${projectId}/evolution`),
+  },
+  facts: {
+    coverage: (projectId: number) =>
+      request<{
+        total_papers: number;
+        extracted_count: number;
+        not_stated_count: number;
+        source_limited_count: number;
+        failed_count: number;
+        pending_count: number;
+        coverage_percent: number;
+      }>(`/projects/${projectId}/facts/coverage`),
+    reextract: (projectId: number, onlyMissing: boolean = true) =>
+      request<{ reextracted_count: number; total_target: number }>(
+        `/projects/${projectId}/facts/reextract?only_missing=${onlyMissing}`,
+        { method: "POST" }
+      ),
   },
   gaps: {
     get: (projectId: number) => request<Gap[]>(`/projects/${projectId}/gaps`),
