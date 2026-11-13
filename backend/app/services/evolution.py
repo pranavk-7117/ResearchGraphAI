@@ -538,14 +538,12 @@ class EvolutionService:
                 "authors_str": ", ".join(authors_list[:3]) if authors_list else None,
                 "abstract": p.abstract,
                 "venue": p.venue,
-                "pub_type": None,
                 "citation_count": p.citation_count or 0,
                 "doi": p.doi,
                 "url": p.original_url or (f"https://doi.org/{p.doi}" if p.doi else None),
                 "topic_tag": paper_cluster_map.get(p.id),
                 "key_contribution": contrib_val or method_val,
                 "gaps_solved": gap_items,
-                "new_aspects": [],
             }
 
         # Group papers into up to 4 chronological windows; OMIT empty windows

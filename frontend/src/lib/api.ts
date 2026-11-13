@@ -128,14 +128,12 @@ export type StreamPaperItem = {
   authors_str?: string | null;
   abstract?: string | null;
   venue?: string | null;
-  pub_type?: string | null;
   citation_count: number;
   doi?: string | null;
   url?: string | null;
   topic_tag?: string | null;
   key_contribution?: string | null;
   gaps_solved?: string[];
-  new_aspects?: string[];
 };
 
 export type EvolutionPhase = {
@@ -512,6 +510,8 @@ export const api = {
   // Clusters, Evolution & Gaps
   clusters: {
     get: (projectId: number) => request<Cluster[]>(`/projects/${projectId}/clusters`),
+    recompute: (projectId: number) =>
+      request<Cluster[]>(`/projects/${projectId}/recluster`, { method: "POST" }),
   },
   evolution: {
     get: (projectId: number) => request<EvolutionData>(`/projects/${projectId}/evolution`),

@@ -637,11 +637,6 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                 <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: "#7c3aed", background: "#f5f3ff", padding: "3px 8px", borderRadius: 6 }}>
                                   <Quote size={11} /> {p.citation_count} Citations
                                 </span>
-                                {p.pub_type && (
-                                  <span style={{ fontSize: 11, color: "#475569", background: "#f1f5f9", padding: "3px 8px", borderRadius: 6 }}>
-                                    {p.pub_type}
-                                  </span>
-                                )}
                                 {(p.url || p.doi) && (
                                   <a
                                     href={p.url || `https://doi.org/${p.doi}`}
@@ -704,13 +699,7 @@ export function EvolutionPage({ project }: { project: Project | null }) {
                                   <Sparkles size={13} /> Cluster Tag
                                 </div>
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
-                                  {p.new_aspects && p.new_aspects.length > 0 ? (
-                                    p.new_aspects.map((tag, tIdx) => (
-                                      <span key={tIdx} style={{ fontSize: 10, background: "#ede9fe", color: "#6d28d9", padding: "2px 7px", borderRadius: 10, fontWeight: 500 }}>
-                                        {tag}
-                                      </span>
-                                    ))
-                                  ) : p.topic_tag ? (
+                                  {p.topic_tag ? (
                                     <span style={{ fontSize: 10, background: "#ede9fe", color: "#6d28d9", padding: "2px 7px", borderRadius: 10, fontWeight: 500 }}>
                                       {p.topic_tag}
                                     </span>

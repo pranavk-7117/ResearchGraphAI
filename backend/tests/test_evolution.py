@@ -78,7 +78,6 @@ def test_similarity_fallback_fires_when_zero_citation_edges():
 
     # Missing fields are null/None, not guessed
     assert res["paper_stream"][0]["authors_str"] is None
-    assert res["paper_stream"][0]["pub_type"] is None
     assert res["paper_stream"][0]["venue"] is None
 
 

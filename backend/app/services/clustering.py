@@ -6,7 +6,11 @@ Supports:
    with logged fallback to NetworkX louvain_communities / greedy_modularity_communities)
    guaranteeing connected communities and deterministic output with a fixed seed.
 2. Embedding-based Agglomerative Clustering with automatic k selection via
-   cosine silhouette score over k in [2, min(8, n - 1)].
+   cosine silhouette score over k in [2, min(8, n // 3)].
+3. Minimum cluster size enforcement (MIN_CLUSTER_SIZE = 3): merges any small cluster
+   (< 3 papers) into the most similar large cluster via centroid cosine similarity.
+4. Class-based TF-IDF (c-TF-IDF) keyword labels generated from titles and abstracts
+   (e.g., 'Gait Analysis · Pressure Sensor · Diabetic Foot').
 
 Stores modularity (community), silhouette (agglomerative), and NMI agreement
 between both partitions in ResearchCluster.params.
@@ -14,7 +18,9 @@ between both partitions in ResearchCluster.params.
 
 from collections import Counter
 import logging
+import math
 import os
+import re
 from typing import Any
 import networkx as nx
 import numpy as np
@@ -27,6 +33,27 @@ from app.services.embeddings import get_paper_embeddings
 from app.services.llm import LLMService
 
 logger = logging.getLogger(__name__)
+
+MIN_CLUSTER_SIZE = 3
+
+STOP_WORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "also", "am", "an", "and",
+    "any", "approach", "approaches", "are", "as", "at", "based", "be", "because", "been",
+    "before", "being", "below", "between", "both", "but", "by", "can", "could", "did",
+    "do", "does", "doing", "down", "during", "each", "few", "for", "from", "further",
+    "had", "has", "have", "having", "he", "her", "here", "hers", "herself", "him",
+    "himself", "his", "how", "i", "if", "in", "into", "is", "it", "its", "itself", "just",
+    "me", "method", "methods", "model", "models", "more", "most", "my", "myself", "no",
+    "nor", "not", "now", "of", "off", "on", "once", "only", "or", "other", "our", "ours",
+    "ourselves", "out", "over", "own", "paper", "papers", "performance", "present",
+    "presented", "propose", "proposed", "research", "result", "results", "same", "she",
+    "should", "show", "shows", "so", "some", "study", "studies", "such", "system", "systems",
+    "than", "that", "the", "their", "theirs", "them", "themselves", "then", "there", "these",
+    "they", "this", "those", "through", "to", "too", "under", "until", "up", "use", "used",
+    "uses", "using", "very", "was", "we", "were", "what", "when", "where", "which",
+    "while", "who", "whom", "why", "with", "would", "you", "your", "yours", "yourself",
+    "yourselves"
+}
 
 
 def _ensure_connected_communities(
@@ -132,7 +159,7 @@ def run_agglomerative_silhouette(
     n_clusters: int | None = None,
 ) -> tuple[dict[int, list[int]], dict[str, Any]]:
     """
-    Cluster embedding matrix X using AgglomerativeClustering, picking k in [2, min(8, n-1)]
+    Cluster embedding matrix X using AgglomerativeClustering, picking k in [2, min(8, n // 3)]
     via cosine silhouette score when n_clusters is None.
     """
     n = len(paper_ids)
@@ -144,7 +171,8 @@ def run_agglomerative_silhouette(
     best_sil = -1.0
 
     if best_k is None:
-        max_k = min(8, n - 1)
+        max_k = min(8, max(2, n // 3))
+        max_k = min(max_k, n - 1)
         if max_k < 2:
             best_k = 2 if n >= 2 else 1
         else:
@@ -188,6 +216,166 @@ def run_agglomerative_silhouette(
         "metric": "cosine",
         "linkage": "average",
     }
+
+
+def merge_small_clusters(
+    groups: list[list[int]],
+    X: np.ndarray | None,
+    valid_paper_ids: list[int],
+    min_size: int = MIN_CLUSTER_SIZE,
+    nx_graph: nx.Graph | None = None,
+) -> list[list[int]]:
+    """
+    Enforce min_size for all clusters.
+    If total papers < min_size, returns a single cluster with all papers.
+    Otherwise, merges any cluster with < min_size papers into the most similar
+    large cluster (via cosine similarity of paper to cluster centroid, or graph adjacency).
+    """
+    all_pids = [pid for g in groups for pid in g]
+    if len(all_pids) <= min_size:
+        return [all_pids] if all_pids else []
+
+    pid_to_idx = {pid: i for i, pid in enumerate(valid_paper_ids)} if valid_paper_ids else {}
+
+    large_groups = [list(g) for g in groups if len(g) >= min_size]
+    small_groups = [list(g) for g in groups if len(g) < min_size]
+
+    if not small_groups:
+        return large_groups
+
+    if not large_groups:
+        # All groups were small, but total papers >= min_size: combine and partition into valid sizes
+        combined: list[int] = []
+        for g in small_groups:
+            combined.extend(g)
+        chunks: list[list[int]] = []
+        cur: list[int] = []
+        for pid in combined:
+            cur.append(pid)
+            if len(cur) >= min_size and (len(combined) - len(cur) >= min_size or len(combined) - len(cur) == 0):
+                chunks.append(cur)
+                cur = []
+        if cur:
+            if chunks:
+                chunks[-1].extend(cur)
+            else:
+                chunks.append(cur)
+        return chunks
+
+    # Merge each small group into the best large group
+    for sm in small_groups:
+        for pid in sm:
+            best_idx = 0
+            best_score = -1e9
+            for idx, lg in enumerate(large_groups):
+                # 1. Cosine similarity to centroid if embeddings available
+                if X is not None and pid in pid_to_idx:
+                    lg_indices = [pid_to_idx[p] for p in lg if p in pid_to_idx]
+                    if lg_indices:
+                        centroid = np.mean(X[lg_indices], axis=0)
+                        c_norm = np.linalg.norm(centroid)
+                        if c_norm > 1e-6:
+                            centroid = centroid / c_norm
+                        score = float(np.dot(X[pid_to_idx[pid]], centroid))
+                    else:
+                        score = 0.0
+                # 2. Graph adjacency fallback
+                elif nx_graph is not None and nx_graph.has_node(pid):
+                    score = sum(
+                        float(nx_graph[pid][other].get("weight", 1.0))
+                        for other in lg
+                        if nx_graph.has_edge(pid, other)
+                    )
+                else:
+                    score = -len(lg)
+
+                if score > best_score:
+                    best_score = score
+                    best_idx = idx
+
+            large_groups[best_idx].append(pid)
+
+    return large_groups
+
+
+def compute_ctfidf_labels(
+    clusters_papers: list[list[models.Paper]],
+) -> list[tuple[str, dict[str, Any]]]:
+    """
+    Generate distinguishing cluster labels using class-based TF-IDF (c-TF-IDF)
+    over member titles and abstracts.
+    """
+    num_clusters = len(clusters_papers)
+    if num_clusters == 0:
+        return []
+
+    # Tokenize each cluster into unigrams and bigrams
+    cluster_term_counts: list[Counter] = []
+    for papers in clusters_papers:
+        c_counter: Counter = Counter()
+        for p in papers:
+            text = f"{p.title or ''} {p.abstract or ''}".lower()
+            tokens = [t for t in re.findall(r"[a-z0-9]+", text) if len(t) >= 3 and t not in STOP_WORDS]
+            for t in tokens:
+                c_counter[t] += 1
+            # Bigrams
+            for i in range(len(tokens) - 1):
+                w1, w2 = tokens[i], tokens[i + 1]
+                bigram = f"{w1} {w2}"
+                c_counter[bigram] += 2  # Boost bigrams slightly for descriptive phrases
+        cluster_term_counts.append(c_counter)
+
+    # Document/cluster frequency DF(t)
+    df_counts: Counter = Counter()
+    for c_counter in cluster_term_counts:
+        for t in c_counter:
+            df_counts[t] += 1
+
+    labels: list[tuple[str, dict[str, Any]]] = []
+
+    for idx, c_counter in enumerate(cluster_term_counts):
+        total_words = max(1, sum(c_counter.values()))
+        scores: list[tuple[str, float]] = []
+
+        for term, count in c_counter.items():
+            tf = count / total_words
+            idf = math.log(1.0 + (num_clusters / max(1, df_counts[term])))
+            score = tf * idf
+            scores.append((term, score))
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+
+        selected_terms: list[tuple[str, float]] = []
+        selected_words: set[str] = set()
+
+        for term, sc in scores:
+            parts = term.split()
+            if any(p in selected_words for p in parts) and len(selected_terms) > 0:
+                continue
+            selected_terms.append((term, sc))
+            for p in parts:
+                selected_words.add(p)
+            if len(selected_terms) >= 3:
+                break
+
+        if not selected_terms:
+            papers = clusters_papers[idx]
+            fallback_title = papers[0].title[:30] if papers else "Cluster"
+            labels.append((f"Cluster: {fallback_title}", {"source": "fallback_empty"}))
+            continue
+
+        formatted_label = " · ".join(
+            " ".join(w.capitalize() for w in t.split()) for t, _ in selected_terms
+        )
+        labels.append((
+            formatted_label,
+            {
+                "source": "c_tf_idf",
+                "top_terms": [{"term": t, "score": round(sc, 4)} for t, sc in selected_terms],
+            },
+        ))
+
+    return labels
 
 
 def compute_partition_nmi(
@@ -244,10 +432,11 @@ class ClusteringService:
         pid_to_idx = {pid: idx for idx, pid in enumerate(valid_paper_ids)}
         X = np.array([paper_embs[pid] for pid in valid_paper_ids], dtype=np.float32) if valid_paper_ids else None
 
-        # Build weighted combined undirected graph from PaperRelations
+        # Build weighted combined undirected graph: weight = 0.5 * citation + 0.5 * similarity
         nx_graph = nx.Graph()
         for pid in paper_ids:
             nx_graph.add_node(pid)
+
         relations = (
             db.query(models.PaperRelation)
             .filter(models.PaperRelation.project_id == project_id)
@@ -256,7 +445,10 @@ class ClusteringService:
         for rel in relations:
             if rel.source_id == rel.target_id or rel.source_id not in paper_map or rel.target_id not in paper_map:
                 continue
-            w = max(0.01, float(rel.score or 1.0))
+            is_citation = (rel.relation_type == "cites")
+            score = float(rel.score or (1.0 if is_citation else 0.5))
+            w = 0.5 * (1.0 if is_citation else 0.0) + 0.5 * score
+            w = max(0.01, w)
             if nx_graph.has_edge(rel.source_id, rel.target_id):
                 nx_graph[rel.source_id][rel.target_id]["weight"] = max(
                     nx_graph[rel.source_id][rel.target_id]["weight"], w
@@ -300,14 +492,30 @@ class ClusteringService:
                 "fallback": leiden_meta.get("fallback"),
             }
 
-        created_clusters: list[models.ResearchCluster] = []
-        for group_paper_ids in selected_groups:
-            group_papers = [paper_map[pid] for pid in group_paper_ids if pid in paper_map]
-            if not group_papers:
-                continue
+        # K5: Enforce MIN_CLUSTER_SIZE = 3 by merging small clusters into most similar cluster
+        selected_groups = merge_small_clusters(
+            selected_groups,
+            X=X,
+            valid_paper_ids=valid_paper_ids,
+            min_size=MIN_CLUSTER_SIZE,
+            nx_graph=nx_graph,
+        )
 
-            # Representative paper: closest to centroid if embeddings exist, else highest citations
+        # Build group paper lists
+        group_papers_list = [
+            [paper_map[pid] for pid in group_paper_ids if pid in paper_map]
+            for group_paper_ids in selected_groups
+        ]
+        group_papers_list = [gp for gp in group_papers_list if gp]
+
+        # K5: Compute descriptive c-TF-IDF keyword labels
+        ctfidf_labels = compute_ctfidf_labels(group_papers_list)
+
+        created_clusters: list[models.ResearchCluster] = []
+        for grp_idx, group_papers in enumerate(group_papers_list):
+            group_paper_ids = [p.id for p in group_papers]
             group_indices = [pid_to_idx[pid] for pid in group_paper_ids if pid in pid_to_idx]
+
             if X is not None and group_indices:
                 centroid = np.mean(X[group_indices], axis=0)
                 idx_distances = {
@@ -321,12 +529,17 @@ class ClusteringService:
 
             years = [p.year for p in group_papers if p.year]
             year_dist = dict(Counter(str(y) for y in sorted(years)))
-            cluster_label, label_evidence = self._generate_cluster_label(group_papers)
+
+            cluster_label, label_evidence = (
+                ctfidf_labels[grp_idx]
+                if grp_idx < len(ctfidf_labels)
+                else (f"Cluster {grp_idx + 1}", {"source": "default"})
+            )
 
             cluster_row = models.ResearchCluster(
                 project_id=project_id,
                 algorithm=stored_algo,
-                params=params_payload,
+                params={**params_payload, "min_cluster_size": MIN_CLUSTER_SIZE, "merged_k": len(group_papers_list)},
                 version="2.0",
                 label=cluster_label,
                 label_evidence=label_evidence,
@@ -349,26 +562,3 @@ class ClusteringService:
 
         db.commit()
         return created_clusters
-
-    def _generate_cluster_label(self, papers: list[models.Paper]) -> tuple[str, dict[str, Any]]:
-        """Synthesize a descriptive cluster theme from member titles and abstracts."""
-        paper_summaries = [
-            f"- '{p.title}' ({p.year or 'n.d.'}): {(p.abstract or '')[:200]}"
-            for p in papers[:6]
-        ]
-        context = "\n".join(paper_summaries)
-
-        if not self.llm.is_available():
-            return f"Cluster: {papers[0].title[:40]}...", {"source": "data_centroid", "papers": [p.title for p in papers[:3]]}
-
-        prompt = (
-            "Analyze the following group of related research papers. Synthesize a concise, "
-            "academically precise thematic label (3 to 6 words) that captures the common method, "
-            "problem, or objective of this cluster. Do not include quotes or numbering.\n\n"
-            f"Papers:\n{context}"
-        )
-        try:
-            label = self.llm.complete(prompt).strip().strip('"').strip("'")
-            return label, {"source": "llm_synthesis", "papers": [p.title for p in papers[:3]]}
-        except Exception:
-            return f"Thematic Group: {papers[0].title[:35]}", {"source": "fallback"}

@@ -742,6 +742,7 @@ def get_clusters(
     return out
 
 
+@router.post("/projects/{project_id}/recluster", response_model=list[schemas.ClusterOut])
 @router.post("/projects/{project_id}/clusters/recompute", response_model=list[schemas.ClusterOut])
 def recompute_clusters(
     project_id: int,

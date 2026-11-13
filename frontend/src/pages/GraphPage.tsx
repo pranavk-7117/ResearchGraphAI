@@ -9,12 +9,14 @@ import {
   Maximize2,
   Minimize2,
   Network,
+  RotateCw,
   Search,
   Sparkles,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, Cluster, GraphData, GraphNode, Project } from "../lib/api";
+import { placeLabels } from "./graphLabelPlacer.js";
 
 // Cluster color themes matching the reference design (Emerald, Amber, Blue, Rose, Purple, Cyan, Indigo)
 export const CLUSTER_PALETTES = [
@@ -160,19 +162,23 @@ export function GraphPage({ project }: { project: Project | null }) {
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [recomputingClusters, setRecomputingClusters] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Toolbar state
-  const [layoutMode, setLayoutMode] = useState<"force" | "time-lane" | "radial" | "concentric">("time-lane");
+  const [layoutMode, setLayoutMode] = useState<"force" | "time-lane" | "radial" | "concentric">("radial");
   const [colorMode, setColorMode] = useState<"cluster" | "citations" | "year">("cluster");
   const [nodeSizeMode, setNodeSizeMode] = useState<"pagerank" | "citations" | "uniform">("citations");
   const [enabledLayers, setEnabledLayers] = useState<{ citation: boolean; coupling: boolean; semantic: boolean }>({
     citation: true,
-    coupling: true,
+    coupling: false,
     semantic: true,
   });
   const [minEdgeWeight, setMinEdgeWeight] = useState<number>(0.0);
   const [egoHops, setEgoHops] = useState<"all" | "1" | "2">("all");
+  const [hoveredNode, setHoveredNode] = useState<any | null>(null);
+  const hasFitRef = useRef(false);
+  const placedLabelsRef = useRef<Map<number, any>>(new Map());
   const [autocompleteResults, setAutocompleteResults] = useState<Array<{ text: string; payload: { type: string; paper_id: number; title: string; year: number | null } }>>([]);
   const [readingPathSteps, setReadingPathSteps] = useState<Array<{ paper_id: number; step: number; hop_distance: number; pagerank: number; title: string | null; year: number | null }>>([]);
   const [loadingReadingPath, setLoadingReadingPath] = useState(false);
@@ -230,6 +236,8 @@ export function GraphPage({ project }: { project: Project | null }) {
       ]);
       setGraphData(gData);
       setClusters(cData);
+      hasFitRef.current = false;
+      setLayoutMode(gData.nodes.length <= 60 ? "radial" : "force");
 
       // G1: Default min edge weight percentile so edges <= 3 * nodes to prevent initial hairball
       if (gData.nodes.length > 0 && gData.edges.length > 3 * gData.nodes.length) {
@@ -260,6 +268,21 @@ export function GraphPage({ project }: { project: Project | null }) {
     }
   }
 
+  async function handleRecluster() {
+    if (!project) return;
+    setRecomputingClusters(true);
+    try {
+      const updatedClusters = await api.clusters.recompute(project.id);
+      setClusters(updatedClusters);
+      const updatedGraph = await api.graph.get(project.id);
+      setGraphData(updatedGraph);
+    } catch (err: any) {
+      setError(err?.message || "Failed to recompute clusters.");
+    } finally {
+      setRecomputingClusters(false);
+    }
+  }
+
   // Adjust d3 force parameters for clean spacing without excessive repulsion
   useEffect(() => {
     if (!graphRef.current) return;
@@ -271,15 +294,38 @@ export function GraphPage({ project }: { project: Project | null }) {
     if (link) {
       link.distance(60);
     }
+  }, [graphData.nodes.length]);
+
+  // Fit viewport on layoutMode changes only
+  useEffect(() => {
     const timer = setTimeout(() => {
       graphRef.current?.zoomToFit(400, 35);
-    }, 400);
+    }, 250);
     return () => clearTimeout(timer);
-  }, [graphData.nodes.length]);
+  }, [layoutMode]);
+
+  // Persistent base nodes - initialized once from graphData.nodes so d3 physics objects retain identity
+  const baseNodes = useMemo(() => {
+    return graphData.nodes.map((n) => ({ ...n, name: n.title }));
+  }, [graphData.nodes]);
+
+  // Layer edge counts for toolbar badge display
+  const layerEdgeCounts = useMemo(() => {
+    let citation = 0;
+    let coupling = 0;
+    let semantic = 0;
+    for (const e of graphData.edges) {
+      const l = e.layer || (e.relation_type === "cites" ? "citation" : e.relation_type === "coupling" ? "coupling" : "semantic");
+      if (l === "citation") citation++;
+      else if (l === "coupling") coupling++;
+      else semantic++;
+    }
+    return { citation, coupling, semantic };
+  }, [graphData.edges]);
 
   // Filtered nodes and edges with layer toggles, edge-weight threshold, and ego-network focus
   const filteredData = useMemo(() => {
-    let nodes = graphData.nodes;
+    let nodes = baseNodes;
     if (selectedClusterId !== null) {
       nodes = nodes.filter((n) => n.cluster_id === selectedClusterId);
     }
@@ -300,10 +346,11 @@ export function GraphPage({ project }: { project: Project | null }) {
     });
 
     let nodeIds = new Set(nodes.map((n) => n.id));
-    if (egoHops !== "all" && selectedNode && nodeIds.has(selectedNode.id)) {
+    const selectedId = selectedNode?.id;
+    if (egoHops !== "all" && selectedId && nodeIds.has(selectedId)) {
       const maxHops = egoHops === "1" ? 1 : 2;
-      const egoIds = new Set<number>([selectedNode.id]);
-      let frontier = new Set<number>([selectedNode.id]);
+      const egoIds = new Set<number>([selectedId]);
+      let frontier = new Set<number>([selectedId]);
       for (let h = 0; h < maxHops; h++) {
         const nextFrontier = new Set<number>();
         for (const e of activeEdges) {
@@ -331,14 +378,14 @@ export function GraphPage({ project }: { project: Project | null }) {
     });
 
     return {
-      nodes: nodes.map((n) => ({ ...n, name: n.title })),
+      nodes, // REUSE nodes directly without re-mapping so positions fx/fy and d3 physics state are preserved!
       links: edges.map((e) => ({
         ...e,
         source: typeof e.source === "object" ? (e.source as any).id : e.source,
         target: typeof e.target === "object" ? (e.target as any).id : e.target,
       })),
     };
-  }, [graphData, selectedClusterId, searchQuery, enabledLayers, minEdgeWeight, egoHops, selectedNode]);
+  }, [baseNodes, graphData.edges, selectedClusterId, searchQuery, enabledLayers, minEdgeWeight, egoHops, egoHops === "all" ? null : selectedNode?.id]);
 
   // Bridge paper threshold (top non-zero betweenness centrality nodes get a ring marker)
   const bridgeThreshold = useMemo(() => {
@@ -391,16 +438,32 @@ export function GraphPage({ project }: { project: Project | null }) {
       const clusterIds = Array.from(new Set(filteredData.nodes.map((n: any) => n.cluster_id)));
       const laneSpacing = Math.max(70, (size.height * 0.65) / Math.max(1, clusterIds.length));
       const xSpan = Math.max(300, size.width * 0.72);
-      const seenLaneYear: Record<string, number> = {};
+
+      // Beeswarm vertical jitter when papers share lane and year so |Δy| >= 2r + 4
+      const laneYearGroups = new Map<string, any[]>();
+      filteredData.nodes.forEach((node: any) => {
+        const yr = typeof node.year === "number" ? node.year : minY;
+        const laneIdx = clusterIds.indexOf(node.cluster_id);
+        const key = `${laneIdx}_${yr}`;
+        if (!laneYearGroups.has(key)) laneYearGroups.set(key, []);
+        laneYearGroups.get(key)!.push(node);
+      });
 
       filteredData.nodes.forEach((node: any) => {
         const yr = typeof node.year === "number" ? node.year : minY;
         const laneIdx = clusterIds.indexOf(node.cluster_id);
         const key = `${laneIdx}_${yr}`;
-        const offsetIdx = seenLaneYear[key] || 0;
-        seenLaneYear[key] = offsetIdx + 1;
+        const group = laneYearGroups.get(key)!;
+        const idxInGroup = group.indexOf(node);
+        const baseCenterY = (laneIdx - (clusterIds.length - 1) / 2) * laneSpacing;
+        const r = getNodeVal(node);
+        const yOffset =
+          idxInGroup === 0
+            ? 0
+            : (idxInGroup % 2 === 1 ? 1 : -1) * Math.ceil(idxInGroup / 2) * (2 * r + 5);
+
         node.fx = ((yr - minY) / spanY - 0.5) * xSpan;
-        node.fy = (laneIdx - (clusterIds.length - 1) / 2) * laneSpacing + (offsetIdx % 3 - 1) * 18;
+        node.fy = baseCenterY + yOffset;
       });
       graphRef.current.d3ReheatSimulation();
     } else if (layoutMode === "radial") {
@@ -423,7 +486,7 @@ export function GraphPage({ project }: { project: Project | null }) {
 
         group.forEach((node: any, nIdx: number) => {
           const subAngle = (nIdx / group.length) * 2 * Math.PI;
-          const subR = 35 + Math.sqrt(nIdx) * 22;
+          const subR = 30 + Math.sqrt(nIdx) * 20;
           node.fx = cx + Math.cos(subAngle) * subR;
           node.fy = cy + Math.sin(subAngle) * subR;
         });
@@ -454,7 +517,7 @@ export function GraphPage({ project }: { project: Project | null }) {
       });
       graphRef.current.d3ReheatSimulation();
     }
-  }, [layoutMode, filteredData.nodes.length, size]);
+  }, [layoutMode, filteredData.nodes, size]);
 
   // Compute node color
   const getNodeColor = (node: any) => {
@@ -480,14 +543,14 @@ export function GraphPage({ project }: { project: Project | null }) {
     }
   };
 
-  // Compute node size
+  // Compute node size (clamped 5px to 16px, log-scale citation count)
   const getNodeVal = (node: any) => {
     if (nodeSizeMode === "citations") {
-      return Math.max(8, Math.min(24, 8 + Math.log2((node.citation_count || 0) + 1) * 2.5));
+      return Math.max(5, Math.min(16, 5 + Math.log2((node.citation_count || 0) + 1) * 1.6));
     } else if (nodeSizeMode === "pagerank") {
-      return Math.max(8, Math.min(24, 8 + (node.pagerank || 0) * 110));
+      return Math.max(5, Math.min(16, 5 + (node.pagerank || 0) * 80));
     }
-    return 9;
+    return 7;
   };
 
   // In-corpus citation breakdown (cited-by vs cites within this corpus)
@@ -632,8 +695,8 @@ export function GraphPage({ project }: { project: Project | null }) {
             </select>
           </div>
 
-          {/* Layer Toggles */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#334155", background: "#f8fafc", padding: "4px 8px", borderRadius: 6, border: "1px solid #cbd5e1" }}>
+          {/* Layer Toggles with edge counts */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#334155", background: "#f8fafc", padding: "4px 8px", borderRadius: 6, border: "1px solid #cbd5e1" }}>
             <span style={{ fontWeight: 600 }}>Layers:</span>
             {(["citation", "coupling", "semantic"] as const).map((layerKey) => (
               <label key={layerKey} style={{ display: "flex", alignItems: "center", gap: 3, cursor: "pointer", textTransform: "capitalize" }}>
@@ -642,7 +705,7 @@ export function GraphPage({ project }: { project: Project | null }) {
                   checked={enabledLayers[layerKey]}
                   onChange={(e) => setEnabledLayers((prev) => ({ ...prev, [layerKey]: e.target.checked }))}
                 />
-                {layerKey}
+                {layerKey} ({layerEdgeCounts[layerKey]})
               </label>
             ))}
           </div>
@@ -903,23 +966,22 @@ export function GraphPage({ project }: { project: Project | null }) {
                 const srcId = Number(typeof link.source === "object" ? link.source.id : link.source);
                 const tgtId = Number(typeof link.target === "object" ? link.target.id : link.target);
                 const isIncident = selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id);
+                const layer = link.layer || (link.relation_type === "cites" ? "citation" : link.relation_type === "coupling" ? "coupling" : "semantic");
+
                 if (selectedNode && !isIncident) {
-                  return link.relation_type === "cites"
-                    ? "rgba(5, 150, 105, 0.22)"
-                    : link.relation_type === "coupling"
-                      ? "rgba(217, 119, 6, 0.20)"
-                      : "rgba(99, 102, 241, 0.16)";
+                  if (layer === "citation") return "rgba(16, 185, 129, 0.20)";
+                  if (layer === "coupling") return "rgba(245, 158, 11, 0.18)";
+                  return "rgba(139, 92, 246, 0.16)";
                 }
-                if (link.relation_type === "cites") return "#059669";
-                if (link.relation_type === "coupling") return "#d97706";
-                return "#6366f1";
+                if (layer === "citation") return "#10b981";
+                if (layer === "coupling") return "#f59e0b";
+                return "#8b5cf6";
               }}
               linkWidth={(link: any) => {
                 const srcId = Number(typeof link.source === "object" ? link.source.id : link.source);
                 const tgtId = Number(typeof link.target === "object" ? link.target.id : link.target);
                 const isIncident = selectedNode && (srcId === selectedNode.id || tgtId === selectedNode.id);
-                const base = link.relation_type === "cites" ? 2.2 : link.relation_type === "coupling" ? 1.8 : 1.4;
-                return isIncident ? base * 1.7 : base;
+                return isIncident ? 2.5 : 1.5;
               }}
               linkLabel={(link: any) => {
                 if (link.relation_type === "cites") return "Verified Citation (Metadata)";
@@ -928,16 +990,72 @@ export function GraphPage({ project }: { project: Project | null }) {
                 }
                 return `Semantic Similarity (Cosine ${(link.score || 0).toFixed(2)})`;
               }}
-              linkLineDash={(link: any) =>
-                link.relation_type === "cites" ? undefined : link.relation_type === "coupling" ? [4, 3] : [2, 3]
-              }
-              linkDirectionalArrowLength={(link: any) => (link.relation_type === "cites" ? 6 : 0)}
+              linkLineDash={undefined}
+              linkDirectionalArrowLength={(link: any) => (link.relation_type === "cites" || link.layer === "citation" ? 6 : 0)}
               linkDirectionalArrowRelPos={0.8}
               linkCurvature={0.08}
               d3VelocityDecay={0.25}
               cooldownTicks={140}
-              // Thematic Convex Hulls / Cluster Clouds
+              // Thematic Convex Hulls, Time-Lane axes, & Priority Label Placement
               onRenderFramePre={(ctx, globalScale) => {
+                // Time-lane layout background year guidelines and ticks
+                if (layoutMode === "time-lane" && filteredData.nodes.length > 0) {
+                  const years = filteredData.nodes.map((n: any) => n.year).filter((y: any) => typeof y === "number");
+                  const minY = years.length ? Math.min(...years) : 2018;
+                  const maxY = years.length ? Math.max(...years) : 2025;
+                  const spanY = Math.max(1, maxY - minY);
+                  const xSpan = Math.max(300, size.width * 0.72);
+
+                  ctx.save();
+                  ctx.strokeStyle = "rgba(226, 232, 240, 0.8)";
+                  ctx.lineWidth = 1;
+                  ctx.setLineDash([4, 4]);
+                  ctx.fillStyle = "#94a3b8";
+                  ctx.font = `600 ${Math.max(10, 11 / Math.sqrt(globalScale))}px Inter, sans-serif`;
+                  ctx.textAlign = "center";
+
+                  for (let yr = minY; yr <= maxY; yr++) {
+                    const x = ((yr - minY) / spanY - 0.5) * xSpan;
+                    ctx.beginPath();
+                    ctx.moveTo(x, -size.height * 0.45);
+                    ctx.lineTo(x, size.height * 0.45);
+                    ctx.stroke();
+
+                    ctx.fillText(String(yr), x, size.height * 0.46);
+                  }
+                  ctx.restore();
+                }
+
+                // Compute greedy priority placed labels (max 8)
+                const candidateIds: number[] = [];
+                if (searchQuery.trim()) {
+                  const q = searchQuery.toLowerCase();
+                  filteredData.nodes.forEach((n: any) => {
+                    if (n.title.toLowerCase().includes(q)) candidateIds.push(n.id);
+                  });
+                }
+                egoNeighborIds.forEach((id) => candidateIds.push(id));
+                top8NodeIds.forEach((id) => candidateIds.push(id));
+
+                placedLabelsRef.current = placeLabels({
+                  nodes: filteredData.nodes.map((n: any) => ({
+                    id: n.id,
+                    x: n.x,
+                    y: n.y,
+                    title: n.title,
+                    radius: getNodeVal(n),
+                  })),
+                  candidateIds,
+                  selectedId: selectedNode?.id,
+                  hoveredId: hoveredNode?.id,
+                  maxLabels: 8,
+                  fontSize: Math.max(9, 10 / Math.sqrt(globalScale)),
+                  measureWidth: (text: string) => {
+                    const fontSize = Math.max(9, 10 / Math.sqrt(globalScale));
+                    ctx.font = `500 ${fontSize}px Inter, sans-serif`;
+                    return ctx.measureText(text).width;
+                  },
+                });
                 if (clusters.length === 0 || colorMode !== "cluster") return;
 
                 // Group nodes by cluster_id
@@ -1055,12 +1173,19 @@ export function GraphPage({ project }: { project: Project | null }) {
                   ctx.restore();
                 });
               }}
-              // Custom Node Rendering
+              // Custom Node Rendering with Selection Dimming & Greedy Placed Labels
               nodeCanvasObjectMode={() => "replace"}
               nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                 const r = getNodeVal(node);
                 const color = getNodeColor(node);
                 const isSelected = selectedNode?.id === node.id;
+                const isEgo = egoNeighborIds.has(node.id);
+                const isDimmed = selectedNode !== null && !isSelected && !isEgo;
+
+                ctx.save();
+                if (isDimmed) {
+                  ctx.globalAlpha = 0.25;
+                }
 
                 // Outer halo for selected node
                 if (isSelected) {
@@ -1095,60 +1220,60 @@ export function GraphPage({ project }: { project: Project | null }) {
                 ctx.strokeStyle = "#ffffff";
                 ctx.stroke();
 
-                // Draw label
-                if (isSelected) {
-                  // Prominent card pill badge for selected node
-                  const label = node.title.length > 34 ? `${node.title.slice(0, 32)}...` : node.title;
-                  const fontSize = Math.max(10, 11 / Math.sqrt(globalScale));
-                  ctx.font = `600 ${fontSize}px Inter, sans-serif`;
-                  const metrics = ctx.measureText(label);
-                  const bW = metrics.width + 16;
-                  const bH = fontSize + 10;
-                  const bX = node.x - bW / 2;
-                  const bY = node.y - r - bH - 6;
+                // Draw collision-free placed label
+                const placed = placedLabelsRef.current.get(node.id);
+                if (placed) {
+                  if (isSelected) {
+                    // Prominent card pill badge for selected node
+                    const label = node.title.length > 34 ? `${node.title.slice(0, 32)}...` : node.title;
+                    const fontSize = Math.max(10, 11 / Math.sqrt(globalScale));
+                    ctx.font = `600 ${fontSize}px Inter, sans-serif`;
+                    const metrics = ctx.measureText(label);
+                    const bW = metrics.width + 16;
+                    const bH = fontSize + 10;
+                    const bX = node.x - bW / 2;
+                    const bY = placed.position === "above" ? node.y - r - bH - 6 : node.y + r + 6;
 
-                  ctx.save();
-                  ctx.shadowColor = "rgba(0,0,0,0.14)";
-                  ctx.shadowBlur = 6;
-                  ctx.shadowOffsetY = 2;
+                    ctx.save();
+                    ctx.shadowColor = "rgba(0,0,0,0.14)";
+                    ctx.shadowBlur = 6;
+                    ctx.shadowOffsetY = 2;
 
-                  ctx.beginPath();
-                  const cr = 4;
-                  ctx.moveTo(bX + cr, bY);
-                  ctx.lineTo(bX + bW - cr, bY);
-                  ctx.arcTo(bX + bW, bY, bX + bW, bY + cr, cr);
-                  ctx.lineTo(bX + bW, bY + bH - cr);
-                  ctx.arcTo(bX + bW, bY + bH, bX + bW - cr, bY + bH, cr);
-                  ctx.lineTo(bX + cr, bY + bH);
-                  ctx.arcTo(bX, bY + bH, bX, bY + bH - cr, cr);
-                  ctx.lineTo(bX, bY + cr);
-                  ctx.arcTo(bX, bY, bX + cr, bY, cr);
-                  ctx.closePath();
+                    ctx.beginPath();
+                    const cr = 4;
+                    ctx.moveTo(bX + cr, bY);
+                    ctx.lineTo(bX + bW - cr, bY);
+                    ctx.arcTo(bX + bW, bY, bX + bW, bY + cr, cr);
+                    ctx.lineTo(bX + bW, bY + bH - cr);
+                    ctx.arcTo(bX + bW, bY + bH, bX + bW - cr, bY + bH, cr);
+                    ctx.lineTo(bX + cr, bY + bH);
+                    ctx.arcTo(bX, bY + bH, bX, bY + bH - cr, cr);
+                    ctx.lineTo(bX, bY + cr);
+                    ctx.arcTo(bX, bY, bX + cr, bY, cr);
+                    ctx.closePath();
 
-                  ctx.fillStyle = "#ffffff";
-                  ctx.fill();
-                  ctx.strokeStyle = "#cbd5e1";
-                  ctx.lineWidth = 1;
-                  ctx.stroke();
-                  ctx.restore();
+                    ctx.fillStyle = "#ffffff";
+                    ctx.fill();
+                    ctx.strokeStyle = "#cbd5e1";
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    ctx.restore();
 
-                  ctx.fillStyle = "#0f172a";
-                  ctx.textAlign = "center";
-                  ctx.textBaseline = "middle";
-                  ctx.fillText(label, node.x, bY + bH / 2);
-                } else if (
-                  (top8NodeIds.has(node.id) || egoNeighborIds.has(node.id)) &&
-                  globalScale >= 0.25
-                ) {
-                  // G2: Only render labels for top 8 papers by citation and ego neighbors to avoid hairball
-                  const label = node.title.length > 24 ? `${node.title.slice(0, 22)}...` : node.title;
-                  const fontSize = Math.max(9, 10 / Math.sqrt(globalScale));
-                  ctx.font = `500 ${fontSize}px Inter, sans-serif`;
-                  ctx.fillStyle = "#334155";
-                  ctx.textAlign = "center";
-                  ctx.textBaseline = "top";
-                  ctx.fillText(label, node.x, node.y + r + 4);
+                    ctx.fillStyle = "#0f172a";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "middle";
+                    ctx.fillText(label, node.x, bY + bH / 2);
+                  } else {
+                    const fontSize = Math.max(9, 10 / Math.sqrt(globalScale));
+                    ctx.font = `500 ${fontSize}px Inter, sans-serif`;
+                    ctx.fillStyle = "#334155";
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = placed.position === "above" ? "bottom" : "top";
+                    ctx.fillText(placed.text, placed.x, placed.y);
+                  }
                 }
+
+                ctx.restore();
               }}
               nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
                 const r = getNodeVal(node) + 4;
@@ -1157,7 +1282,14 @@ export function GraphPage({ project }: { project: Project | null }) {
                 ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
                 ctx.fill();
               }}
+              onNodeHover={(node: any) => setHoveredNode(node || null)}
               onNodeClick={(node: any) => setSelectedNode(node)}
+              onEngineStop={() => {
+                if (!hasFitRef.current) {
+                  hasFitRef.current = true;
+                  graphRef.current?.zoomToFit(400, 35);
+                }
+              }}
             />
           </div>
 
@@ -1180,22 +1312,22 @@ export function GraphPage({ project }: { project: Project | null }) {
             }}
           >
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#334155" }}>
-              <span style={{ width: 18, height: 2.5, background: "#059669", display: "inline-block", borderRadius: 1 }} />
+              <span style={{ width: 18, height: 2.5, background: "#10b981", display: "inline-block", borderRadius: 1 }} />
               Citation (Solid Green)
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#334155" }}>
-              <span style={{ width: 18, height: 2, borderTop: "2.5px dashed #d97706", display: "inline-block" }} />
-              Bib. Coupling (Dashed Amber)
+              <span style={{ width: 18, height: 2, background: "#f59e0b", display: "inline-block" }} />
+              Bib. Coupling (Solid Amber)
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#334155" }}>
-              <span style={{ width: 18, height: 2, borderTop: "2.5px dotted #6366f1", display: "inline-block" }} />
-              Semantic Similarity (Dotted Indigo)
+              <span style={{ width: 18, height: 2, background: "#8b5cf6", display: "inline-block" }} />
+              Semantic Similarity (Solid Purple)
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 6, color: "#64748b" }}>
               <span>Size:</span>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#94a3b8", display: "inline-block" }} />
-              <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#94a3b8", display: "inline-block" }} />
-              Influence
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#94a3b8", display: "inline-block" }} />
+              <span style={{ width: 14, height: 14, borderRadius: "50%", background: "#94a3b8", display: "inline-block" }} />
+              Influence (5-16px)
             </span>
           </div>
         </div>
@@ -1229,18 +1361,40 @@ export function GraphPage({ project }: { project: Project | null }) {
                 <Sparkles size={15} color="#2563eb" />
                 <h3 style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", margin: 0 }}>Thematic Clusters</h3>
               </div>
-              <span
-                style={{
-                  fontSize: 11,
-                  background: "#eff6ff",
-                  color: "#1d4ed8",
-                  padding: "2px 7px",
-                  borderRadius: 10,
-                  fontWeight: 600,
-                }}
-              >
-                {clusters.length}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button
+                  onClick={handleRecluster}
+                  disabled={recomputingClusters}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 10,
+                    padding: "3px 7px",
+                    background: "#f1f5f9",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 4,
+                    cursor: recomputingClusters ? "not-allowed" : "pointer",
+                    color: "#475569",
+                  }}
+                  title="Recompute clusters using silhouette/Leiden community detection"
+                >
+                  <RotateCw size={10} style={{ animation: recomputingClusters ? "spin 1s linear infinite" : undefined }} />
+                  <span>{recomputingClusters ? "Clustering..." : "Recompute"}</span>
+                </button>
+                <span
+                  style={{
+                    fontSize: 11,
+                    background: "#eff6ff",
+                    color: "#1d4ed8",
+                    padding: "2px 7px",
+                    borderRadius: 10,
+                    fontWeight: 600,
+                  }}
+                >
+                  {clusters.length}
+                </span>
+              </div>
             </div>
 
             {clusters.length > 0 && clusters[0].params && (
@@ -1302,8 +1456,8 @@ export function GraphPage({ project }: { project: Project | null }) {
                         {c.label}
                       </span>
                     </div>
-                    <span style={{ fontSize: 11, color: c.member_count < 3 ? "#94a3b8" : "#64748b", flexShrink: 0, marginLeft: 6 }}>
-                      {c.member_count} {c.member_count === 1 ? "paper" : "papers"} {c.member_count < 3 ? "· small" : ""}
+                    <span style={{ fontSize: 11, color: "#64748b", flexShrink: 0, marginLeft: 6, fontWeight: 500 }}>
+                      ({c.member_count})
                     </span>
                   </button>
                 );

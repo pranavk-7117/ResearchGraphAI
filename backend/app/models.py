@@ -248,7 +248,7 @@ class PaperRelation(Base):
     source_id: Mapped[int] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
     target_id: Mapped[int] = mapped_column(ForeignKey("papers.id", ondelete="CASCADE"), index=True)
     relation_type: Mapped[str] = mapped_column(String(50), index=True)
-    # cites | similar | same_dataset | same_method | extends | conflicts
+    # cites | similar | coupling
     basis: Mapped[str] = mapped_column(String(50))
     # citation_metadata | extracted_text | embedding_similarity | llm_inference
     score: Mapped[float] = mapped_column(Float, default=1.0)

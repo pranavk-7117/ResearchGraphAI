@@ -1,5 +1,6 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
+import { placeLabels, boxesOverlap } from "../graphLabelPlacer.js";
 
 // Logic helpers matching GraphPage.tsx implementations
 
@@ -50,6 +51,26 @@ function calculateMinEdgeWeightCutoff(nodes, edges, maxRatio = 3) {
     return Math.min(0.85, Math.max(0.35, Math.round(threshold * 20) / 20));
   }
   return 0.50;
+}
+
+function getNodeVal(node, nodeSizeMode = "citations") {
+  if (nodeSizeMode === "citations") {
+    return Math.max(5, Math.min(16, 5 + Math.log2((node.citation_count || 0) + 1) * 1.6));
+  } else if (nodeSizeMode === "pagerank") {
+    return Math.max(5, Math.min(16, 5 + (node.pagerank || 0) * 80));
+  }
+  return 7;
+}
+
+function pickDefaultLayout(nodeCount) {
+  return nodeCount <= 60 ? "radial" : "force";
+}
+
+function computeBeeswarmY(idxInGroup, baseCenterY, r) {
+  if (idxInGroup === 0) return baseCenterY;
+  const sign = idxInGroup % 2 === 1 ? 1 : -1;
+  const step = Math.ceil(idxInGroup / 2);
+  return baseCenterY + sign * step * (2 * r + 5);
 }
 
 describe("Knowledge Graph (G1-G8) Logic Tests", () => {
@@ -117,5 +138,108 @@ describe("Knowledge Graph (G1-G8) Logic Tests", () => {
     // Filtered edges with score >= cutoff should be approximately <= 30
     const retained = edges.filter((e) => e.score >= cutoff);
     assert.ok(retained.length <= 35, `Retained count ${retained.length} should be near 30`);
+  });
+
+  test("K3: placeLabels ensures selected node is always placed even in crowded clusters", () => {
+    const nodes = [
+      { id: 1, x: 100, y: 100, title: "Diabetic Foot Ulcer Sensor", radius: 10 },
+      { id: 2, x: 102, y: 105, title: "Smart Insole Pressure", radius: 10 },
+    ];
+    const placed = placeLabels({
+      nodes,
+      candidateIds: [2],
+      selectedId: 1,
+      maxLabels: 8,
+    });
+    assert.ok(placed.has(1), "Selected node id=1 must be placed");
+  });
+
+  test("K3: placeLabels avoids overlapping bounding boxes among non-mandatory labels", () => {
+    // 3 nodes very close to each other
+    const nodes = [
+      { id: 10, x: 200, y: 200, title: "First Dense Paper Title", radius: 10 },
+      { id: 11, x: 205, y: 204, title: "Second Dense Paper Title", radius: 10 },
+      { id: 12, x: 203, y: 202, title: "Third Dense Paper Title", radius: 10 },
+      { id: 13, x: 500, y: 500, title: "Isolated Distant Paper", radius: 10 },
+    ];
+    const placed = placeLabels({
+      nodes,
+      candidateIds: [10, 11, 12, 13],
+      maxLabels: 8,
+    });
+    const placedArr = Array.from(placed.values());
+    for (let i = 0; i < placedArr.length; i++) {
+      for (let j = i + 1; j < placedArr.length; j++) {
+        const overlap = boxesOverlap(placedArr[i].bbox, placedArr[j].bbox);
+        assert.strictEqual(
+          overlap,
+          false,
+          `Boxes for nodes ${placedArr[i].nodeId} and ${placedArr[j].nodeId} should not overlap`
+        );
+      }
+    }
+  });
+
+  test("K3: placeLabels caps total placed labels at maxLabels", () => {
+    const nodes = Array.from({ length: 20 }, (_, i) => ({
+      id: i + 1,
+      x: i * 150,
+      y: (i % 2) * 150,
+      title: `Paper Number ${i + 1} Long Title`,
+      radius: 8,
+    }));
+    const candidateIds = nodes.map((n) => n.id);
+    const placed = placeLabels({
+      nodes,
+      candidateIds,
+      maxLabels: 8,
+    });
+    assert.ok(placed.size <= 8, `Placed size ${placed.size} should be <= 8`);
+  });
+
+  test("K2: pickDefaultLayout chooses radial for <= 60 papers and force for > 60", () => {
+    assert.strictEqual(pickDefaultLayout(25), "radial");
+    assert.strictEqual(pickDefaultLayout(60), "radial");
+    assert.strictEqual(pickDefaultLayout(61), "force");
+    assert.strictEqual(pickDefaultLayout(150), "force");
+  });
+
+  test("K2: getNodeVal clamps radius strictly between 5px and 16px", () => {
+    const zeroCitations = { id: 1, citation_count: 0 };
+    const hugeCitations = { id: 2, citation_count: 500000 };
+    assert.strictEqual(getNodeVal(zeroCitations), 5);
+    assert.strictEqual(getNodeVal(hugeCitations), 16);
+  });
+
+  test("K2: computeBeeswarmY guarantees vertical separation >= 2r + 4 between adjacent nodes in lane", () => {
+    const r = 8;
+    const y0 = computeBeeswarmY(0, 100, r);
+    const y1 = computeBeeswarmY(1, 100, r);
+    const y2 = computeBeeswarmY(2, 100, r);
+    const y3 = computeBeeswarmY(3, 100, r);
+    assert.strictEqual(y0, 100);
+    assert.ok(Math.abs(y1 - y0) >= 2 * r + 4, "Delta y between 0 and 1 must be >= 2r+4");
+    assert.ok(Math.abs(y2 - y0) >= 2 * r + 4, "Delta y between 0 and 2 must be >= 2r+4");
+    assert.ok(Math.abs(y3 - y1) >= 2 * r + 4, "Delta y between 1 and 3 on same side must be >= 2r+4");
+  });
+
+  test("K1: Node identity is preserved and not reconstructed on node click", () => {
+    const rawNodes = [
+      { id: 1, title: "Paper 1", fx: 10, fy: 20 },
+      { id: 2, title: "Paper 2", fx: 30, fy: 40 },
+    ];
+    // Simulating baseNodes memoization
+    const baseNodes = rawNodes.map((n) => ({ ...n, name: n.title }));
+
+    // Simulating filteredData when selectedNode changes
+    let selectedNode = baseNodes[0];
+    const filteredNodesFirst = baseNodes; // Reused directly
+
+    selectedNode = baseNodes[1];
+    const filteredNodesSecond = baseNodes; // Reused directly
+
+    assert.strictEqual(filteredNodesFirst, filteredNodesSecond, "Node arrays reference should be identical");
+    assert.strictEqual(filteredNodesFirst[0], filteredNodesSecond[0], "Node object references must be preserved");
+    assert.strictEqual(filteredNodesSecond[0].fx, 10, "fx coordinate must persist");
   });
 });

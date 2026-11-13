@@ -51,13 +51,42 @@
 - [x] **G2. Label culling & collision** (top 8 by size + hover/selected/ego)
 - [x] **G3. Arrowheads ONLY on citation edges** (`directed` per edge, tests)
 - [x] **G4. Node sizing & PageRank diagnostic** (citations default, warning chip on flat PageRank)
-- [x] **G5. Cluster readability & c-TF-IDF labels** (min size 3, merge small, silhouette)
+- [ ] **G5. Cluster readability & c-TF-IDF labels** (moved to K5 in Round 3)
 - [x] **G6. Selected node inspector & unified graph page** (in/out corpus citations, path analysis)
 - [x] **G7. Remove legacy fake research graph artifacts** (grep verification)
 - [x] **G8. Frontend Vitest suite for Knowledge Graph** (`GraphPage.test.tsx` / `graph_logic.test.mjs`)
 
 ### Round 2 Wrap-up
 - [x] **R-FINAL. Documentation, before/after table, screenshots** (`docs/EVALUATION.md`, `README.md`)
+
+---
+
+## Round 3 Checklist
+
+### Part 1 — Knowledge Graph
+- [x] **K1. Stop the graph from rearranging on click** (`frontend/src/pages/GraphPage.tsx`)
+- [x] **K2. Readable defaults like the simple earlier version** (Radial Clustered default, beeswarm jitter for time-lane, solid coloured edges)
+- [x] **K3. Real label collision avoidance** (greedy priority placer, bounding box checks, max 8 labels)
+- [x] **K4. Fit and sizing** (initial render & layout change only, not on click)
+- [x] **K5. Clusters that make sense** (`clustering.py`, `routes.py`, `GraphPage.tsx` — min size 3, merge small, c-TF-IDF labels, `POST /recluster`)
+- [x] **K6. Remove dead and misleading graph/evolution fields** (remove `pub_type`, `new_aspects`, no `extends` edge)
+
+### Part 2 — Evolution Timeline & Extraction Quality
+- [ ] **E1. Explicit extraction states** (`paper_facts.status`, `source_scope`, `paper_kind`, `error_reason`, migration, UI honest states)
+- [ ] **E2. Lists instead of single slots; fix misnamed field** (up to 5 items for limitations/future_work, rename `gaps_solved` -> `limitations_and_gaps`)
+- [ ] **E3. Fix section detection** (`pdf_processing.py` — line-anchored heading detector, PyMuPDF font/bold flags)
+- [ ] **E4. Better full-text access** (`fulltext.py` — multi-source fallbacks, timeout/retry, `fulltext_note`)
+- [ ] **E5. Targeted limitation / future-work extraction** (`facts_extraction.py` — cue lexicon scoring, top-10 candidates, exact quote return)
+- [ ] **E6. Semantic validation: reject verified junk** (title-echo < 0.6, abstract-echo, min 6 tokens, contribution fallback labels)
+- [ ] **E7. Paper-type awareness** (survey vs empirical vs system, open challenges for surveys)
+- [ ] **E8. Retries, backfill and coverage transparency** (`POST /facts/reextract`, `GET /facts/coverage`, Retry button)
+- [ ] **E9. Measure extraction quality honestly** (`extraction_eval.py`, gold template, `docs/EVALUATION.md`)
+
+### Part 3 — Other Issues & Polish
+- [ ] **C1. Test database setup** (session-scoped fixture in `conftest.py` running `alembic upgrade head` on empty scratch DB)
+- [ ] **C2. Frontend duplicates cleanup** (unused components, legacy colours, types)
+- [ ] **C3. README / PROGRESS honesty audit** (verify all checklist claims against actual code)
+- [ ] **R3-FINAL. Report and cleanup** (screenshots, before/after tables, evaluation docs)
 
 ---
 
